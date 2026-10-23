@@ -69,7 +69,7 @@ class MyScanCallbacks : public NimBLEScanCallbacks {
             pendingMessage.temp     = temp;
             pendingMessage.sequence++;
 
-            esp_err_t res = esp_now_send(S3_5_1_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
+            esp_err_t res = esp_now_send(P4_4_1_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
             Serial.print("  |  ESP-NOW send: ");
             Serial.println(res == ESP_OK ? "OK" : String("ERR ") + res);
 
@@ -105,6 +105,8 @@ void setup() {
 
     //Init the sequence to 1 so that the Monitor can detect the first packet
     pendingMessage.sequence = 1;
+    //Pings before the first sensor reading go out as TPMS packets with sensorId 0
+    pendingMessage.type = TYPE_TPMS;
 
     WiFi.mode(WIFI_STA);        // required for ESP-NOW
     WiFi.disconnect();          // just to be safe
@@ -133,7 +135,7 @@ void setup() {
 
     // Add peer (your ESP32-S3)
     esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, S3_5_1_MAC, 6);
+    memcpy(peerInfo.peer_addr, P4_4_1_MAC, 6);
     peerInfo.channel = 0;   // 0 = current Wi-Fi channel
     peerInfo.encrypt = false;
 
@@ -168,6 +170,6 @@ void loop() {
 
     delay(5000);
 
-    //PING - send last received measurement
-    esp_err_t res = esp_now_send(S3_5_1_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
+    //PING - send last received measurement (sensorId 0 until the first sensor is received)
+    esp_err_t res = esp_now_send(P4_4_1_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
 }

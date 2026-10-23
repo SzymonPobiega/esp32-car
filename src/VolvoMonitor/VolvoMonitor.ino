@@ -26,6 +26,38 @@ static portMUX_TYPE g_bmsMux = portMUX_INITIALIZER_UNLOCKED;
 static Contracts::BmsPacket g_pendingBms = {};
 static bool g_bmsPending = false;
 
+static portMUX_TYPE g_lightsMux = portMUX_INITIALIZER_UNLOCKED;
+static Contracts::WorkLightsStatusPacket g_pendingWorkLights = {};
+static bool g_workLightsPending = false;
+static Contracts::LightsStatusPacket g_pendingLights = {};
+static bool g_lightsPending = false;
+
+static void onLightChanged(CamperUI::LightGroup group, uint8_t idx, bool on)
+{
+  Serial.printf("Light group=%u idx=%u -> %s\n",
+                (unsigned)group, (unsigned)idx, on ? "ON" : "OFF");
+
+  esp_err_t res;
+  if (group == CamperUI::LightGroup::Interior) {
+    Contracts::LightsSwitchPacket pkt;
+    pkt.type = Contracts::TYPE_LIGHT_SWITCH;
+    pkt.zone = (int16_t)idx + 1;
+    pkt.state = (int16_t)on;
+    res = espnow_send_cached(Contracts::SHELLY_BRIDGE_MAC, (uint8_t*)&pkt, sizeof(pkt));
+  } else {
+    Contracts::WorkLightsSwitchPacket pkt;
+    pkt.type = Contracts::TYPE_WORKLIGHT_SWITCH;
+    pkt.input = (int16_t)idx + 1;
+    pkt.state = (int16_t)on;
+    res = espnow_send_cached(Contracts::LILYGO_WORKLIGHT_MAC, (uint8_t*)&pkt, sizeof(pkt));
+  }
+
+  if (res != ESP_OK) {
+    Serial.print("ESP-NOW send: ERR ");
+    Serial.println(res);
+  }
+}
+
 #if LV_COLOR_DEPTH != 16
 #error "Set LV_COLOR_DEPTH to 16 (RGB565) in lv_conf.h"
 #endif
@@ -269,7 +301,7 @@ void setup() {
   lv_obj_set_style_bg_opa(cont3, LV_OPA_TRANSP, 0);
 
   CamperUI::Callbacks camper_cb = {};
-  // camper_cb.onLightChanged = ...;
+  camper_cb.onLightChanged = onLightChanged;
   // camper_cb.onAllOff = ...;
   // camper_cb.onActuatorPressed = ...;
   // camper_cb.onActuatorReleased = ...;
@@ -513,6 +545,28 @@ void onEspNowRecv(const esp_now_recv_info_t *info,
 
       return;
     }
+    if (type == Contracts::TYPE_WORKLIGHT_STATUS && len == (int)sizeof(Contracts::WorkLightsStatusPacket))
+    {
+      Contracts::WorkLightsStatusPacket pkt;
+      memcpy(&pkt, data, sizeof(pkt));
+
+      portENTER_CRITICAL(&g_lightsMux);
+      g_pendingWorkLights = pkt;
+      g_workLightsPending = true;
+      portEXIT_CRITICAL(&g_lightsMux);
+      return;
+    }
+    if (type == Contracts::TYPE_LIGHT_STATUS && len == (int)sizeof(Contracts::LightsStatusPacket))
+    {
+      Contracts::LightsStatusPacket pkt;
+      memcpy(&pkt, data, sizeof(pkt));
+
+      portENTER_CRITICAL(&g_lightsMux);
+      g_pendingLights = pkt;
+      g_lightsPending = true;
+      portEXIT_CRITICAL(&g_lightsMux);
+      return;
+    }
 }
 
 void onEspNowSent(const wifi_tx_info_t* tx_info, esp_now_send_status_t status) {
@@ -559,6 +613,16 @@ bool initEspNow()
         while (true) { delay(1000); }
     }
 
+    memcpy(peerInfo.peer_addr, Contracts::LILYGO_WORKLIGHT_MAC, 6);
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        Serial.println("Failed to add work lights peer!");
+    }
+
+    memcpy(peerInfo.peer_addr, Contracts::SHELLY_BRIDGE_MAC, 6);
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        Serial.println("Failed to add Shelly bridge peer!");
+    }
+
     start_time  = millis();
     last_update = start_time;
     return true;
@@ -584,6 +648,37 @@ void loop() {
     setSocPercent(bms.soc_percent);
     setRemainingAh(bms.remaining / 100.0f);
     setChargeCurrentA(bms.amps / 100.0f);
+  }
+
+  Contracts::WorkLightsStatusPacket workLights = {};
+  Contracts::LightsStatusPacket lights = {};
+  bool updateWorkLights = false;
+  bool updateLights = false;
+  portENTER_CRITICAL(&g_lightsMux);
+  if (g_workLightsPending) {
+    workLights = g_pendingWorkLights;
+    g_workLightsPending = false;
+    updateWorkLights = true;
+  }
+  if (g_lightsPending) {
+    lights = g_pendingLights;
+    g_lightsPending = false;
+    updateLights = true;
+  }
+  portEXIT_CRITICAL(&g_lightsMux);
+
+  if (updateWorkLights) {
+    setLightState(LightGroup::Exterior, 0, workLights.relay1);
+    setLightState(LightGroup::Exterior, 1, workLights.relay2);
+    setLightState(LightGroup::Exterior, 2, workLights.relay3);
+    setLightState(LightGroup::Exterior, 3, workLights.relay4);
+  }
+
+  if (updateLights) {
+    setLightState(LightGroup::Interior, 0, lights.zone1);
+    setLightState(LightGroup::Interior, 1, lights.zone2);
+    setLightState(LightGroup::Interior, 2, lights.zone3);
+    setLightState(LightGroup::Interior, 3, lights.zone4);
   }
 
   lv_timer_handler();

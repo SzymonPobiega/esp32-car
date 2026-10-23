@@ -10,7 +10,6 @@ struct GaugeUI {
     lv_obj_t* label_temp = nullptr;
     lv_obj_t* label_pressure = nullptr;
     lv_obj_t* label_age = nullptr;
-    lv_obj_t* label_period = nullptr;
 };
 
 GaugeUI create_pressure_gauge(lv_obj_t* parent, int size_px);

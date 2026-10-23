@@ -94,13 +94,7 @@ GaugeUI create_pressure_gauge(lv_obj_t* parent, int size_px)
     const lv_font_t* age_font = choose_font_by_height(size_px / 8);
     lv_obj_set_style_text_font(g.label_age, age_font, 0);
     lv_label_set_text(g.label_age, "");
-    lv_obj_align_to(g.label_age, g.meter, LV_ALIGN_OUT_BOTTOM_MID, -30, 50);
-
-    g.label_period = lv_label_create(parent);
-    lv_obj_set_style_text_color(g.label_period, lv_color_black(), 0);
-    lv_obj_set_style_text_font(g.label_period, age_font, 0);
-    lv_label_set_text(g.label_period, "");
-    lv_obj_align_to(g.label_period, g.meter, LV_ALIGN_OUT_BOTTOM_MID, 30, 50);
+    lv_obj_align_to(g.label_age, g.meter, LV_ALIGN_OUT_BOTTOM_MID, 0, 50);
 
     g.label_pressure = lv_label_create(g.meter);
     lv_obj_set_style_text_color(g.label_pressure, lv_color_white(), 0);
@@ -139,20 +133,20 @@ static void anim_all_cb(lv_timer_t *t)
     }
 
     uint32_t now = millis();
-    uint32_t elapsed_sec = (now - last_update) / 1000;
 
+    // Seconds since the last reading from each sensor
     for (int gi = 0; gi < 4; gi++) {
         GaugeUI &g0 = gauges[gi];
+
+        if (lastUpdated[gi] == 0) {
+            lv_label_set_text(g0.label_age, "--");
+            continue;
+        }
 
         uint32_t age_sec = (now - lastUpdated[gi]) / 1000;
         char ageBuf[32];
         snprintf(ageBuf, sizeof(ageBuf), "%u", age_sec);
         lv_label_set_text(g0.label_age, ageBuf);
-
-        uint32_t period_sec = (now - start_time) / ((totalPeriods[gi] + 1) * 1000);
-        char periodBuf[32];
-        snprintf(periodBuf, sizeof(periodBuf), "%u", period_sec);
-        lv_label_set_text(g0.label_period, periodBuf);
     }
 }
 

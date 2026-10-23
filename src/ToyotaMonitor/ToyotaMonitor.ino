@@ -4,13 +4,15 @@
 #include <Arduino.h>
 #include "lvgl.h"
 #include "driver/i2c_master.h"
-// #include "demos/lv_demos.h"
 #include "pins_config.h"
 #include "src/lcd/st7701_lcd.h"
 #include "src/touch/gt911_touch.h"
 #include "gauge_ui.hpp"
 #include "tpms_data.hpp"
+#include "modem_link.hpp"
 #include "attitude_ui.hpp"
+#include "bms_ui.hpp"
+#include "link_indicator.hpp"
 #include "src/pitch.c"
 #include "src/roll.c"
 
@@ -45,7 +47,7 @@ static bool lvgl_port_flush_dpi_panel_ready_callback(esp_lcd_panel_handle_t pane
     return false;
 }
 
-// 显示刷新
+
 void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
 {
   const int offsetx1 = area->x1;
@@ -170,9 +172,17 @@ void setup()
   lv_obj_set_style_bg_color(scr, lv_color_make(155, 155, 155), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
+  /* BMS bar at the bottom, outside the tabview so it shows on every tab */
+  const int bms_bar_h = 56;
+  lv_obj_t *status_bar = create_bms_bar(scr, disp_w, bms_bar_h);
+
+  // TPMS connector pings every 5 s, so 15 s without one means the link is down
+  create_link_indicator(status_bar, "TPMS", &tpms::last_update, 15000);
+
   /* Create the tabview as top-level */
-  lv_obj_t * tv = lv_tabview_create(lv_scr_act(), LV_DIR_TOP, 50);   // 50 = tab bar height
-  lv_obj_set_size(tv, disp_w, disp_h);
+  const int tab_bar_h = 60;
+  lv_obj_t * tv = lv_tabview_create(lv_scr_act(), LV_DIR_TOP, tab_bar_h);
+  lv_obj_set_size(tv, disp_w, disp_h - bms_bar_h);
 
   /* Create tabs */
   lv_obj_t * tab1 = lv_tabview_add_tab(tv, "Gauges");
@@ -203,10 +213,11 @@ void setup()
       LV_GRID_FR(1), LV_GRID_FR(1),
       LV_GRID_TEMPLATE_LAST
   };
+  // Two equal rows filling the space between the tab bar and the BMS bar,
+  // so the gauges are centered vertically
   static lv_coord_t row_dsc[] = {
-      LV_GRID_FR(4),   // Row 0: top gauges
-      LV_GRID_FR(4),   // Row 1: bottom gauges
-      LV_GRID_FR(2),   // Row 2: controls
+      LV_GRID_FR(1),   // Row 0: top gauges
+      LV_GRID_FR(1),   // Row 1: bottom gauges
       LV_GRID_TEMPLATE_LAST
   };
   lv_obj_set_grid_dsc_array(cont, col_dsc, row_dsc);
@@ -257,7 +268,7 @@ void setup()
   setup_tab2(cont2, disp_w, disp_h);
 
   init_gauge_timer();
-  tpms::initLink();
+  modem::begin();
 }
 
 void setup_tab2(lv_obj_t* cont, int disp_w, int disp_h)
@@ -266,10 +277,10 @@ void setup_tab2(lv_obj_t* cont, int disp_w, int disp_h)
     LV_GRID_FR(1), LV_GRID_FR(1),
     LV_GRID_TEMPLATE_LAST
   };
+  // Two equal rows, so the indicators are centered vertically
   static lv_coord_t row_dsc[] = {
-      LV_GRID_FR(4),   // Row 0: top (Pitch)
-      LV_GRID_FR(4),   // Row 1: bottom (Roll)
-      LV_GRID_FR(2),   // Row 2: controls
+      LV_GRID_FR(1),   // Row 0: top (Pitch)
+      LV_GRID_FR(1),   // Row 1: bottom (Roll)
       LV_GRID_TEMPLATE_LAST
   };
   lv_obj_set_grid_dsc_array(cont, col_dsc, row_dsc);
@@ -291,7 +302,13 @@ void setup_tab2(lv_obj_t* cont, int disp_w, int disp_h)
       LV_GRID_ALIGN_CENTER, 0, 1
   );
 
-  int s_att = (int)(s * 1.3f); 
+  int s_att = (int)(s * 1.3f);
+
+  // Keep the indicators inside their grid row (half the height, minus the row gap)
+  lv_obj_update_layout(cont);
+  int row_h = (lv_obj_get_content_height(cont) - lv_obj_get_style_pad_row(cont, 0)) / 2;
+  if (s_att > row_h) s_att = row_h;
+
   pitch_ui = create_attitude_indicator(cell_pitch, s_att);
   attitude_set_center_image(&pitch_ui, &pitch_img);
 
@@ -310,34 +327,67 @@ void setup_tab2(lv_obj_t* cont, int disp_w, int disp_h)
   roll_ui = create_attitude_indicator(cell_roll, s_att);
   attitude_set_center_image(&roll_ui, &roll_img);
 
-  // ---- Controls row (same as your other screen) ----
-  lv_obj_t *cell_led = lv_obj_create(cont);
-  lv_obj_remove_style_all(cell_led);
-  lv_obj_set_style_bg_opa(cell_led, LV_OPA_TRANSP, 0);
-  lv_obj_set_size(cell_led, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-
-  lv_obj_set_grid_cell(
-      cell_led,
-      LV_GRID_ALIGN_CENTER, 0, 1,
-      LV_GRID_ALIGN_CENTER, 2, 1
-  );
-
-  lv_obj_t *cell_lbl = lv_obj_create(cont);
-  lv_obj_remove_style_all(cell_lbl);
-  lv_obj_set_style_bg_opa(cell_lbl, LV_OPA_TRANSP, 0);
-  lv_obj_set_size(cell_lbl, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-
-  lv_obj_set_grid_cell(
-      cell_lbl,
-      LV_GRID_ALIGN_CENTER, 1, 1,
-      LV_GRID_ALIGN_CENTER, 2, 1
-  );
-
   //lv_obj_add_flag(pitch_ui.car, LV_OBJ_FLAG_HIDDEN);
   //lv_obj_add_flag(roll_ui.car,  LV_OBJ_FLAG_HIDDEN);
 
   attitude_set_value(&pitch_ui,  20.0f);   // +20°
   attitude_set_value(&roll_ui,  -15.0f);   // -15°
+}
+
+void handleModemMessage(const modem::Message& m)
+{
+  int16_t type;
+  if (m.len < sizeof(type)) return;
+  memcpy(&type, m.data, sizeof(type));
+
+  switch (type) {
+  case Contracts::TYPE_TPMS: {
+    Contracts::TpmsPacket in;
+    if (m.len != sizeof(in)) return;
+    memcpy(&in, m.data, sizeof(in));
+
+    tpms::TpmsPacket p = { in.sequence, in.sensorId, in.pressure, in.temp };
+    tpms::handleTpms(p);
+    if (p.sensorId == tpms::kNoSensor) {
+      Serial.printf("TPMS connector ping (no sensor received yet) rssi=%d\n", m.rssi);
+      break;
+    }
+    Serial.print("seq="); Serial.print(p.sequence);
+    Serial.print(" id="); Serial.print(p.sensorId);
+    Serial.print(" pressure="); Serial.print(p.pressure);
+    Serial.print(" temp="); Serial.print(p.temp);
+    Serial.print(" rssi="); Serial.println(m.rssi);
+    break;
+  }
+
+  case Contracts::TYPE_GYRO_ANGLE: {
+    Contracts::GyroAnglePacket g;
+    if (m.len != sizeof(g)) return;
+    memcpy(&g, m.data, sizeof(g));
+
+    attitude_set_value(&pitch_ui, g.pitch_deg / 100.0f);
+    attitude_set_value(&roll_ui, g.roll_deg / 100.0f);
+    break;
+  }
+
+  case Contracts::TYPE_BMS: {
+    Contracts::BmsPacket b;
+    if (m.len != sizeof(b)) return;
+    memcpy(&b, m.data, sizeof(b));
+
+    bms_bar_update(b);
+    Serial.printf("BMS: %.2f V %.2f A soc=%d%% remaining=%.2f Ah temp=%.1f C\n",
+                  b.volts / 100.0f, b.amps / 100.0f, b.soc_percent,
+                  b.remaining / 100.0f, b.temp / 10.0f);
+    break;
+  }
+
+  default:
+    Serial.printf("ESP-NOW: unknown type %d (%u bytes) from %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  type, m.len, m.srcMac[0], m.srcMac[1], m.srcMac[2],
+                  m.srcMac[3], m.srcMac[4], m.srcMac[5]);
+    break;
+  }
 }
 
 void loop()
@@ -349,12 +399,9 @@ void loop()
 
   lv_timer_handler();
 
-  tpms::TpmsPacket p;
-  if (tpms::tryReadTpms(p)) {
-    Serial.print("seq="); Serial.print(p.sequence);
-    Serial.print(" id="); Serial.print(p.sensorId);
-    Serial.print(" pressure="); Serial.print(p.pressure);
-    Serial.print(" temp="); Serial.println(p.temp);
+  modem::Message m;
+  while (modem::poll(m)) {
+    handleModemMessage(m);
   }
-  delay(500);
+  delay(5);
 }

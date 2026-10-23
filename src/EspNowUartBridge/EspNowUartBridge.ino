@@ -1,147 +1,166 @@
+// ESP-NOW modem for the P4 dashboard, running on the ESP32-C6 that sits next to the P4.
+//
+// Receives ESP-NOW packets and forwards them to the P4 over UART0, framed as described
+// in Shared/ModemProtocol.hpp. Sends a heartbeat every second so the P4 can tell the
+// modem is alive and learn its MAC address.
+//
+// UART0 is the link to the P4, so nothing else may print to it. Debug output goes to the
+// USB Serial/JTAG port, and only when "USB CDC On Boot" is enabled.
+
 #include <WiFi.h>
 #include <esp_now.h>
-#include <esp_mac.h> 
+#include <esp_mac.h>
+#include <esp_wifi.h>
+#include <esp_log.h>
+#include <atomic>
 #include "ContractsInclude.hpp"
 
 // -------------------- USER CONFIG --------------------
-static const uint8_t broadcastMAC[6] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF }; // <-- Brodcast
+static const int UART_TX_PIN = 16;     // C6 U0TXD -> P4 GPIO32
+static const int UART_RX_PIN = 17;     // C6 U0RXD <- P4 GPIO35
 
-static const int UART_RX_PIN = 16;     // GPIO16
-static const int UART_TX_PIN = 17;     // GPIO17
-static const uint32_t UART_BAUD = 115200;
-
-// Framing: [len:1][type:1][value:len-1], total bytes on wire = 1 + len
-static const uint8_t MAX_LEN_FIELD = 250;   // max "len" value we accept
-static const size_t  MAX_MSG_BYTES = 1 + MAX_LEN_FIELD;
+static const size_t RX_QUEUE_LEN = 32;          // ESP-NOW packets buffered between callback and UART
+static const size_t UART_TX_BUFFER = 4096;
 // -----------------------------------------------------
 
-// Use Serial1 for UART bridge
-HardwareSerial &U = Serial1;
+#if ARDUINO_USB_CDC_ON_BOOT
+  #define DBG(...) Serial.printf(__VA_ARGS__)
+#else
+  #define DBG(...) do {} while (0)
+#endif
 
-// Small RX buffer for UART -> ESPNOW
-static uint8_t uartBuf[MAX_MSG_BYTES];
+HardwareSerial &Link = Serial0;
 
-// ---------- ESPNOW callbacks ----------
+struct RxItem {
+  Modem::EspNowRxHeader header;
+  uint8_t len;
+  uint8_t data[Modem::MAX_ESPNOW_DATA];
+};
+
+static QueueHandle_t rxQueue = nullptr;
+
+static std::atomic<uint32_t> rxCount{0};
+static std::atomic<uint32_t> rxDropped{0};
+static std::atomic<uint32_t> rxOversize{0};
+
+static uint8_t staMac[6];
+static uint8_t frameBuf[Modem::MAX_FRAME];
+static uint32_t lastHeartbeatMs = 0;
+
+// ---------- ESP-NOW callback ----------
+// Runs in the Wi-Fi task: copy into the queue and return.
 void onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-  if (!data || len <= 0) return;
+  if (!info || !data || len <= 0) return;
 
-  // Forward as-is to UART (exact bytes, no modification)
-  uint8_t l = (uint8_t)len;
-  U.write(&l, 1);
-  U.write(data, len);
+  if ((size_t)len > Modem::MAX_ESPNOW_DATA) {
+    rxOversize++;
+    return;
+  }
+
+  RxItem item;
+  memcpy(item.header.srcMac, info->src_addr, 6);
+  item.header.rssi = info->rx_ctrl ? (int8_t)info->rx_ctrl->rssi : 0;
+  item.len = (uint8_t)len;
+  memcpy(item.data, data, len);
+
+  rxCount++;
+  if (xQueueSend(rxQueue, &item, 0) != pdTRUE) {
+    rxDropped++;
+  }
 }
 
-void onEspNowSent(const wifi_tx_info_t* tx_info, esp_now_send_status_t status) {
-}
-
-// ---------- Setup ESPNOW ----------
+// ---------- Setup ESP-NOW ----------
 bool initEspNow() {
-    WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  WiFi.setSleep(false);
 
-    // Read the real STA MAC from efuse
-    uint8_t staMac[6];
-    esp_read_mac(staMac, ESP_MAC_WIFI_STA);
-
-    char macStr[18];
-    snprintf(macStr, sizeof(macStr),
-            "%02X:%02X:%02X:%02X:%02X:%02X",
-            staMac[0], staMac[1], staMac[2],
-            staMac[3], staMac[4], staMac[5]);
-
-    Serial.print("ESP-NOW (STA) MAC: ");
-    Serial.println(macStr);
-
-    // Now init ESP-NOW
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("ESP-NOW init failed!");
-        return false;
-    }
-
-    esp_now_register_recv_cb(onEspNowRecv);
-    esp_now_register_send_cb(onEspNowSent);
-
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, broadcastMAC, 6);
-    peerInfo.channel = 0;
-    peerInfo.encrypt = false;
-
-    // Add peer (replace if already exists)
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-        Serial.println("esp_now_add_peer failed");
-        return false;
-    }
-
-    return true;
-}
-
-// ---------- UART framing reader ----------
-// Non-blocking-ish: attempts to read a full framed message; returns true when a full message is in uartBuf
-bool readOneUartMessage(size_t &outLen) {
-  // Need at least 1 byte for len
-  if (U.available() < 1) return false;
-
-  int l = U.peek();
-  if (l < 0) return false;
-
-  uint8_t lenField = (uint8_t)l;
-
-  //Serial.println(lenField);
-
-  // Validate
-  if (lenField == 0 || lenField > MAX_LEN_FIELD) {
-    // bad length -> drop one byte to resync
-    U.read();
+  if (esp_wifi_set_channel(Modem::ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
+    DBG("esp_wifi_set_channel failed\n");
     return false;
   }
 
-  // Need total bytes available: 1 + lenField
-  size_t total = 1 + (size_t)lenField;
-  if ((size_t)U.available() < total) return false;
+  esp_read_mac(staMac, ESP_MAC_WIFI_STA);
+  DBG("ESP-NOW (STA) MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+      staMac[0], staMac[1], staMac[2], staMac[3], staMac[4], staMac[5]);
 
-  // Read the full frame
-  size_t r = U.readBytes(uartBuf, total);
-  if (r != total) return false;
+  if (esp_now_init() != ESP_OK) {
+    DBG("ESP-NOW init failed!\n");
+    return false;
+  }
 
-  outLen = total;
+  esp_now_register_recv_cb(onEspNowRecv);
   return true;
+}
+
+// ---------- UART output ----------
+void sendFrame(uint8_t kind, const uint8_t *payload, uint16_t len) {
+  size_t n = Modem::buildFrame(frameBuf, kind, payload, len);
+  Link.write(frameBuf, n);
+}
+
+void forwardRxItem(const RxItem &item) {
+  uint8_t payload[Modem::MAX_PAYLOAD];
+  memcpy(payload, &item.header, sizeof(item.header));
+  memcpy(payload + sizeof(item.header), item.data, item.len);
+  sendFrame(Modem::KIND_ESPNOW_RX, payload, (uint16_t)(sizeof(item.header) + item.len));
+}
+
+void sendHeartbeat() {
+  Modem::Heartbeat hb;
+  memcpy(hb.mac, staMac, 6);
+
+  uint8_t primary = 0;
+  wifi_second_chan_t second;
+  esp_wifi_get_channel(&primary, &second);
+  hb.channel = primary;
+
+  hb.uptimeMs = millis();
+  hb.rxCount = rxCount;
+  hb.rxDropped = rxDropped;
+  hb.rxOversize = rxOversize;
+  sendFrame(Modem::KIND_HEARTBEAT, (const uint8_t *)&hb, sizeof(hb));
 }
 
 // ---------- Arduino ----------
 void setup() {
-    Serial.begin(115200);
+  // Keep IDF logs off UART0, it carries the link to the P4
+  esp_log_level_set("*", ESP_LOG_NONE);
 
-    Serial.println("Hello...");
+#if ARDUINO_USB_CDC_ON_BOOT
+  Serial.begin(115200);
+#endif
 
-    if (!initEspNow()) {
-        Serial.println("ESPNOW init failed, restarting...");
-        delay(1000);
-        ESP.restart();
-    }
+  Link.setTxBufferSize(UART_TX_BUFFER);
+  Link.begin(Modem::UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
 
-    Serial.println("Bridge ready: ESPNOW <-> UART");
-
+  rxQueue = xQueueCreate(RX_QUEUE_LEN, sizeof(RxItem));
+  if (!rxQueue || !initEspNow()) {
+    DBG("Init failed, restarting...\n");
     delay(1000);
+    ESP.restart();
+  }
 
-    // UART on GPIO16/17
-    U.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-    
-    //From now on we can't print because GPIO pins are used to connections
+  DBG("ESP-NOW modem ready on channel %d\n", Modem::ESPNOW_CHANNEL);
+  sendHeartbeat();
+  lastHeartbeatMs = millis();
 }
 
 void loop() {
-  // UART -> ESPNOW
-  size_t msgLen = 0;
-  if (readOneUartMessage(msgLen)) {
-    // Send as-is
-    esp_err_t err = esp_now_send(broadcastMAC, uartBuf, msgLen);
-    Serial.println(msgLen);
-    if (err != ESP_OK) {
-      // If send fails, you can optionally log
-      // Serial.printf("esp_now_send err=%d\n", (int)err);
-    }
+  RxItem item;
+
+  // Block briefly for the first packet, then drain whatever else is queued
+  if (xQueueReceive(rxQueue, &item, pdMS_TO_TICKS(10)) == pdTRUE) {
+    do {
+      forwardRxItem(item);
+    } while (xQueueReceive(rxQueue, &item, 0) == pdTRUE);
   }
 
-  // Let background WiFi/ESPNOW do its thing
-  delay(1);
+  uint32_t now = millis();
+  if (now - lastHeartbeatMs >= Modem::HEARTBEAT_INTERVAL_MS) {
+    lastHeartbeatMs = now;
+    sendHeartbeat();
+    DBG("rx=%lu dropped=%lu oversize=%lu\n",
+        (unsigned long)rxCount.load(), (unsigned long)rxDropped.load(), (unsigned long)rxOversize.load());
+  }
 }
