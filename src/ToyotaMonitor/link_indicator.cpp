@@ -39,7 +39,7 @@ static void link_indicator_timer_cb(lv_timer_t *t)
     }
 }
 
-void create_link_indicator(lv_obj_t *parent, const char *name,
+lv_obj_t *create_link_indicator(lv_obj_t *parent, const char *name,
                            const volatile uint32_t *last_seen_ms, uint32_t timeout_ms)
 {
     LinkIndicator *li = new LinkIndicator{};
@@ -66,4 +66,5 @@ void create_link_indicator(lv_obj_t *parent, const char *name,
 
     set_color(li, COLOR_NEVER);
     lv_timer_create(link_indicator_timer_cb, 50, li);
+    return cont;
 }

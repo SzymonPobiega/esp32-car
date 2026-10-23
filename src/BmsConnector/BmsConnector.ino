@@ -26,7 +26,12 @@ static NimBLEUUID CH_FF02("0000ff02-0000-1000-8000-00805f9b34fb");
 static NimBLEUUID SVC_FFE5("0000FFE5-0000-1000-8000-00805F9A34FB");
 static NimBLEUUID CH_FFE4("0000FFE4-0000-1000-8000-00805F9A34FB");
 
-static const char* TARGET_MAC = "A5:C2:37:62:EF:6E";
+//Volvo
+//static const char* TARGET_MAC = "A5:C2:37:62:EF:6E";
+
+//Toyoya
+static const char* TARGET_MAC = "A5:C2:37:2B:DC:A1";
+
 static const uint8_t broadcast_mac[] = {0xff,0xff,0xff,0xff,0xff,0xff};
 
 static NimBLEClient* client = nullptr;

@@ -20,6 +20,7 @@ namespace Contracts {
   static constexpr int16_t TYPE_WORKLIGHT_STATUS = 0x08;
   static constexpr int16_t TYPE_LIGHT_SWITCH = 0x09;
   static constexpr int16_t TYPE_LIGHT_STATUS = 0x0A;
+  static constexpr int16_t TYPE_OBD = 0x0B;
   static constexpr int16_t TYPE_SHELLY_BRIDGE_KEEPALIVE = 0x41;
 
   //S3
@@ -112,7 +113,28 @@ namespace Contracts {
     int16_t temp;
   };
 
+  // ObdPacket.status
+  static constexpr int16_t OBD_STATUS_NO_DONGLE = 0;  // looking for / connecting to the BLE dongle
+  static constexpr int16_t OBD_STATUS_NO_ECU = 1;     // dongle connected, vehicle not answering
+  static constexpr int16_t OBD_STATUS_OK = 2;         // vehicle answering
+
+  // Value not available (request failed or not supported)
+  static constexpr int16_t OBD_NO_VALUE = -32768;
+
+  struct PACKED ObdPacket {
+    int16_t type;
+    int16_t status;
+    int16_t gear;        // raw gear code from 21DA (A & 7)
+    int16_t lockup;      // torque converter lockup flag from 21DA (bit 4 of A)
+    int16_t atf_pan;     // deg C
+    int16_t atf_outlet;  // deg C
+    int16_t map_kpa;     // manifold absolute pressure, kPa
+    int16_t baro_kpa;    // barometric pressure, kPa
+    int16_t boost;       // centi-bar (MAP - baro)
+  };
+
   static_assert(sizeof(GyroAnglePacket) == 10, "GyroAnglePacket must be 10 bytes");
+  static_assert(sizeof(ObdPacket) == 18, "ObdPacket must be 18 bytes");
   static_assert(sizeof(GyroHeightPacket) == 4, "GyroHeightPacket must be 4 bytes");
   static_assert(sizeof(TpmsPacket) == 16, "TpmsPacket must be 16 bytes");
   static_assert(sizeof(BmsPacket) == 12, "BmsPacket must be 12 bytes");

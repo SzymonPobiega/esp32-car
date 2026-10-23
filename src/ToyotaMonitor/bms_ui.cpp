@@ -18,7 +18,7 @@ struct BmsBarUI {
 };
 
 static BmsBarUI ui;
-static uint32_t lastUpdateMs = 0;
+volatile uint32_t bms_last_update = 0;
 static bool hasData = false;
 
 static lv_obj_t *create_value_label(lv_obj_t *parent)
@@ -40,7 +40,7 @@ static void set_values_color(lv_color_t color)
 
 static void bms_stale_timer_cb(lv_timer_t *t)
 {
-    if (hasData && millis() - lastUpdateMs > BMS_STALE_MS) {
+    if (hasData && millis() - bms_last_update > BMS_STALE_MS) {
         set_values_color(COLOR_STALE);
     }
 }
@@ -72,22 +72,23 @@ void bms_bar_update(const Contracts::BmsPacket &b)
 {
     char buf[16];
 
-    snprintf(buf, sizeof(buf), "%.2f V", b.volts / 100.0f);
+    // Whole numbers only, decimals make the bar too crowded
+    snprintf(buf, sizeof(buf), "%ld V", lroundf(b.volts / 100.0f));
     lv_label_set_text(ui.label_volts, buf);
 
-    snprintf(buf, sizeof(buf), "%+.2f A", b.amps / 100.0f);
+    snprintf(buf, sizeof(buf), "%+ld A", lroundf(b.amps / 100.0f));
     lv_label_set_text(ui.label_amps, buf);
 
     snprintf(buf, sizeof(buf), "%d %%", b.soc_percent);
     lv_label_set_text(ui.label_soc, buf);
 
-    snprintf(buf, sizeof(buf), "%.1f Ah", b.remaining / 100.0f);
+    snprintf(buf, sizeof(buf), "%ld Ah", lroundf(b.remaining / 100.0f));
     lv_label_set_text(ui.label_remaining, buf);
 
-    snprintf(buf, sizeof(buf), "%.1f °C", b.temp / 10.0f);
+    snprintf(buf, sizeof(buf), "%ld °C", lroundf(b.temp / 10.0f));
     lv_label_set_text(ui.label_temp, buf);
 
-    lastUpdateMs = millis();
+    bms_last_update = millis();
     hasData = true;
     set_values_color(COLOR_FRESH);
 }

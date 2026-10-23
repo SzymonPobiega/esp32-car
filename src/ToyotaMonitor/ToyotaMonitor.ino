@@ -13,12 +13,16 @@
 #include "attitude_ui.hpp"
 #include "bms_ui.hpp"
 #include "link_indicator.hpp"
+#include "obd_ui.hpp"
 #include "src/pitch.c"
 #include "src/roll.c"
 
 // Keep these somewhere global if you need to update them later
 static AttitudeUI pitch_ui;
 static AttitudeUI roll_ui;
+
+// millis() of the last gyro packet (0 = never)
+static volatile uint32_t gyro_last_update = 0;
 
 extern const lv_img_dsc_t pitch_img;
 extern const lv_img_dsc_t roll_img;
@@ -173,11 +177,31 @@ void setup()
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
   /* BMS bar at the bottom, outside the tabview so it shows on every tab */
-  const int bms_bar_h = 56;
+  const int bms_bar_h = 88;
   lv_obj_t *status_bar = create_bms_bar(scr, disp_w, bms_bar_h);
 
+  // Connector status lights, 2x2 at the right end of the bar
+  static lv_coord_t link_col_dsc[] = { LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST };
+  static lv_coord_t link_row_dsc[] = { LV_GRID_CONTENT, LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST };
+  lv_obj_t *links = lv_obj_create(status_bar);
+  lv_obj_remove_style_all(links);
+  lv_obj_set_size(links, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_clear_flag(links, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_grid_dsc_array(links, link_col_dsc, link_row_dsc);
+  lv_obj_set_style_pad_row(links, 6, 0);
+  lv_obj_set_style_pad_column(links, 12, 0);
+
   // TPMS connector pings every 5 s, so 15 s without one means the link is down
-  create_link_indicator(status_bar, "TPMS", &tpms::last_update, 15000);
+  lv_obj_t *link = create_link_indicator(links, "TPMS", &tpms::last_update, 15000);
+  lv_obj_set_grid_cell(link, LV_GRID_ALIGN_START, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  // OBD connector sends at least every second, but BLE scanning can pause it for several seconds
+  link = create_link_indicator(links, "OBD", &obd_last_update, 15000);
+  lv_obj_set_grid_cell(link, LV_GRID_ALIGN_START, 0, 1, LV_GRID_ALIGN_CENTER, 1, 1);
+  // BMS and gyro connectors send every second
+  link = create_link_indicator(links, "BMS", &bms_last_update, 10000);
+  lv_obj_set_grid_cell(link, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+  link = create_link_indicator(links, "GYRO", &gyro_last_update, 10000);
+  lv_obj_set_grid_cell(link, LV_GRID_ALIGN_START, 1, 1, LV_GRID_ALIGN_CENTER, 1, 1);
 
   /* Create the tabview as top-level */
   const int tab_bar_h = 60;
@@ -187,7 +211,7 @@ void setup()
   /* Create tabs */
   lv_obj_t * tab1 = lv_tabview_add_tab(tv, "Gauges");
   lv_obj_t * tab2 = lv_tabview_add_tab(tv, "Tab2");
-  lv_obj_t * tab3 = lv_tabview_add_tab(tv, "Tab3");
+  lv_obj_t * tab3 = lv_tabview_add_tab(tv, "Transmission");
 
   lv_obj_t * content = lv_tabview_get_content(tv);
   lv_obj_set_style_pad_all(content, 0, 0);
@@ -266,6 +290,14 @@ void setup()
   lv_obj_clear_flag(cont2, LV_OBJ_FLAG_SCROLLABLE);
 
   setup_tab2(cont2, disp_w, disp_h);
+
+  /* Remove padding/border from the tab page itself */
+  lv_obj_set_style_pad_all(tab3, 0, 0);
+  lv_obj_set_style_border_width(tab3, 0, 0);
+  lv_obj_set_style_radius(tab3, 0, 0);
+  lv_obj_clear_flag(tab3, LV_OBJ_FLAG_SCROLLABLE);
+
+  create_obd_tab(tab3);
 
   init_gauge_timer();
   modem::begin();
@@ -365,8 +397,18 @@ void handleModemMessage(const modem::Message& m)
     if (m.len != sizeof(g)) return;
     memcpy(&g, m.data, sizeof(g));
 
+    gyro_last_update = millis();
     attitude_set_value(&pitch_ui, g.pitch_deg / 100.0f);
     attitude_set_value(&roll_ui, g.roll_deg / 100.0f);
+    break;
+  }
+
+  case Contracts::TYPE_OBD: {
+    Contracts::ObdPacket o;
+    if (m.len != sizeof(o)) return;
+    memcpy(&o, m.data, sizeof(o));
+
+    obd_ui_update(o);
     break;
   }
 
