@@ -6,29 +6,62 @@ Concepts shared with the Toyota (ESP-NOW, packet contracts, vehicle profiles, fl
 
 ## Topology
 
+### Sensor data
+
+Connectors read third-party sensors over BLE and send the readings to the displays over ESP-NOW.
+
 ```mermaid
 flowchart LR
-  TPMS["TPMS sensors (6)"] -- "BLE advert" --> TC["TpmsConnector"]
-  WT["WT901 IMU"] -- "BLE GATT" --> GC["GyroConnector"]
-  JBD["JBD BMS"] -- "BLE GATT" --> BC["BmsConnector"]
-  TC -- "ESP-NOW unicast<br/>TPMS" --> VM["VolvoMonitor<br/>5&quot; S3"]
-  GC -- "ESP-NOW unicast<br/>GYRO_ANGLE" --> VM
-  BC -- "ESP-NOW broadcast<br/>BMS" --> VM
-  BC -- "ESP-NOW broadcast<br/>BMS" --> CP["VolvoControlPanel"]
-  VM -- "ESP-NOW unicast<br/>CAMERA_SELECT" --> CAM["VolvoCameraController<br/>LilyGO"]
-  VM -- "ESP-NOW unicast<br/>WORKLIGHT_SWITCH" --> WL["VolvoWorkLightsController<br/>LilyGO"]
-  VM -- "ESP-NOW unicast<br/>LIGHT_SWITCH" --> SB["ShellyConnectorUartBridge"]
-  CP -- "ESP-NOW unicast<br/>WORKLIGHT_SWITCH" --> WL
-  CP -- "ESP-NOW unicast<br/>LIGHT_SWITCH" --> SB
-  WL -- "ESP-NOW broadcast<br/>WORKLIGHT_STATUS" --> CP
-  WL -. "broadcast<br/>WORKLIGHT_STATUS" .-> VM
-  SB -- "ESP-NOW broadcast<br/>LIGHT_STATUS" --> CP
-  SB -. "broadcast<br/>LIGHT_STATUS" .-> VM
-  SB <-- "UART 115200" --> SC["ShellyConnector"]
-  SC <-- "Wi-Fi HTTP RPC" --> SH["Shelly Plus RGBW PM"]
+  subgraph Sensors
+    TPMS["TPMS sensors (6)"]
+    WT["WT901 IMU"]
+    JBD["JBD BMS"]
+  end
+  subgraph Connectors
+    TC["TpmsConnector"]
+    GC["GyroConnector"]
+    BC["BmsConnector"]
+  end
+  subgraph Displays
+    VM["VolvoMonitor"]
+    CP["VolvoControlPanel"]
+  end
+  TPMS -- "BLE advert" --> TC
+  WT -- "BLE GATT" --> GC
+  JBD -- "BLE GATT" --> BC
+  TC -- "TPMS" --> VM
+  GC -- "GYRO_ANGLE" --> VM
+  BC -. "BMS (broadcast)" .-> VM
+  BC -. "BMS (broadcast)" .-> CP
 ```
 
-Both displays can switch the interior (Shelly) and exterior (work lights) lights. Status comes back as ESP-NOW broadcasts that both displays receive (dotted lines to VolvoMonitor), so a change made on one display shows up on the other.
+Solid ESP-NOW arrows are unicast; dotted arrows are broadcasts.
+
+### Control
+
+Both displays switch the interior (Shelly) and exterior (work lights) lights; VolvoMonitor also selects the camera. Commands are unicast. Status comes back as broadcasts that both displays receive, so a change made on one display shows up on the other.
+
+```mermaid
+flowchart LR
+  subgraph Displays
+    VM["VolvoMonitor"]
+    CP["VolvoControlPanel"]
+  end
+  subgraph Actuators
+    CAM["VolvoCameraController<br/>(LilyGO)"]
+    WL["VolvoWorkLightsController<br/>(LilyGO)"]
+    SB["ShellyConnectorUartBridge"]
+  end
+  SC["ShellyConnector"]
+  SH["Shelly Plus RGBW PM"]
+  VM -- "CAMERA_SELECT" --> CAM
+  Displays -- "WORKLIGHT_SWITCH" --> WL
+  Displays -- "LIGHT_SWITCH" --> SB
+  WL -. "WORKLIGHT_STATUS (broadcast)" .-> Displays
+  SB -. "LIGHT_STATUS (broadcast)" .-> Displays
+  SB <-- "UART" --> SC
+  SC <-- "Wi-Fi HTTP RPC" --> SH
+```
 
 ## Components
 
