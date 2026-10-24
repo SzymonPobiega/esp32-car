@@ -11,15 +11,16 @@ volatile uint32_t totalPeriods[kMaxSensors]   = {0};
 volatile uint32_t last_update                 = 0;
 volatile uint32_t start_time                  = 0;
 
+static_assert(sizeof(Vehicle::TPMS_SENSORS) / sizeof(Vehicle::TPMS_SENSORS[0]) <= kMaxSensors,
+              "More TPMS sensors in the vehicle profile than gauges");
+
+// Gauge index of a sensor (Vehicle::TPMS_SENSORS order), kMaxSensors if it is not ours
 uint32_t getIndex(uint32_t sensor)
 {
-    if (sensor == 8924691)  return 0; //OK TPMS1_132E88  
-    else if (sensor == 9580339)  return 1; //OK TPMS3_332F92  
-    else if (sensor == 9449267) return 2; //OK TPMS3_332F90  
-    else if (sensor == 6499363)  return 3; //OK TPMS2_232C63  
-    else if (sensor == 14692163)  return 4; //OK TPMS4_432FE0
-    else if (sensor == 2240579)  return 5; //OK TPMS4_433022  
-    return 0;
+    for (uint32_t i = 0; i < sizeof(Vehicle::TPMS_SENSORS) / sizeof(Vehicle::TPMS_SENSORS[0]); i++) {
+        if (Vehicle::TPMS_SENSORS[i] == sensor) return i;
+    }
+    return kMaxSensors;
 }
 
 bool processTpms(Contracts::TpmsPacket& pkt) {

@@ -23,23 +23,7 @@ namespace Contracts {
   static constexpr int16_t TYPE_OBD = 0x0B;
   static constexpr int16_t TYPE_SHELLY_BRIDGE_KEEPALIVE = 0x41;
 
-  //S3
-  inline constexpr uint8_t S3_5_1_MAC[] = { 0x50, 0x78, 0x7D, 0x13, 0x22, 0xF8 };
-
-  //S3 7 inch
-  inline constexpr uint8_t S3_7_1_MAC[] = { 0xD0, 0xCF, 0x13, 0x06, 0x79, 0xA0 };
-
-  //Volvo camera control LilyGO
-  inline constexpr uint8_t LILYGO_CAMERA_MAC[] = { 0x94, 0x51, 0xDC, 0x47, 0xAE, 0xC4 };
-
-  //Volvo work lights control LilyGO
-  inline constexpr uint8_t LILYGO_WORKLIGHT_MAC[] = { 0xE0, 0x8C, 0xFE, 0x75, 0xDA, 0x54 };
-
-  //Bridge from ESP-NOW to Shelly connector via UART
-  inline constexpr uint8_t SHELLY_BRIDGE_MAC[] = { 0xD4, 0xE9, 0xF4, 0xA8, 0x7E, 0x34 };
-
-  //P4
-  inline constexpr uint8_t P4_4_1_MAC[] = { 0x9C, 0x13, 0x9E, 0xC3, 0xFF, 0x60 };
+  // Node addresses and other per-vehicle values live in Shared/Vehicle.hpp
 
   struct PACKED GyroAnglePacket {
     int16_t type;

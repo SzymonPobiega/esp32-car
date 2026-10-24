@@ -5,13 +5,6 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include "ContractsInclude.hpp"
-#include <HardwareSerial.h>
-
-static const int UART_RX_PIN = 16;
-static const int UART_TX_PIN = 17;
-static const uint32_t UART_BAUD = 115200;
-
-HardwareSerial& U = Serial1;
 
 using namespace Contracts;
 
@@ -26,13 +19,7 @@ static NimBLEUUID CH_FF02("0000ff02-0000-1000-8000-00805f9b34fb");
 static NimBLEUUID SVC_FFE5("0000FFE5-0000-1000-8000-00805F9A34FB");
 static NimBLEUUID CH_FFE4("0000FFE4-0000-1000-8000-00805F9A34FB");
 
-//Volvo
-//static const char* TARGET_MAC = "A5:C2:37:62:EF:6E";
-
-//Toyoya
-static const char* TARGET_MAC = "A5:C2:37:2B:DC:A1";
-
-static const uint8_t broadcast_mac[] = {0xff,0xff,0xff,0xff,0xff,0xff};
+// BMS address and ESP-NOW destination come from the vehicle profile (Shared/Vehicles/*.hpp)
 
 static NimBLEClient* client = nullptr;
 static NimBLERemoteCharacteristic* chNotify = nullptr;
@@ -59,21 +46,12 @@ void onEspNowSent(const wifi_tx_info_t* tx_info, esp_now_send_status_t status) {
     Serial.println(status == ESP_NOW_SEND_SUCCESS ? "SUCCESS" : "FAIL");
 }
 
-static void sendBmsOverUart(const BmsPacket& pkt) {
-    const uint8_t len = sizeof(BmsPacket);
-    U.write(&len, 1);
-    U.write((const uint8_t*)&pkt, len);
-    U.flush();
-    //Serial.print("Date sent over UART");
-}
-
 // ==== Setup ==== //
 void setup() {
   Serial.begin(115200);
-  U.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
 
   Serial.println();
-  Serial.println("BMS gateway");
+  Serial.printf("BMS gateway (%s)\n", Vehicle::NAME);
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
@@ -103,7 +81,7 @@ void setup() {
 
   // Add peer (your ESP32-S3)
   esp_now_peer_info_t peerInfo = {};
-  memcpy(peerInfo.peer_addr, broadcast_mac, 6);
+  memcpy(peerInfo.peer_addr, Vehicle::BMS_DEST_MAC, 6);
   peerInfo.channel = 0;   // 0 = current Wi-Fi channel
   peerInfo.encrypt = false;
 
@@ -226,7 +204,7 @@ static void onNotify(NimBLERemoteCharacteristic*, uint8_t* data, size_t len, boo
 
 // ---------- Connect ----------
 static bool connectBMS() {
-  NimBLEAddress addr(std::string(TARGET_MAC), BLE_ADDR_PUBLIC);
+  NimBLEAddress addr(std::string(Vehicle::BMS_BLE_MAC), BLE_ADDR_PUBLIC);
 
   if (!client) {
     client = NimBLEDevice::createClient();
@@ -234,7 +212,7 @@ static bool connectBMS() {
   }
 
   Serial.print("Connecting to ");
-  Serial.println(TARGET_MAC);
+  Serial.println(Vehicle::BMS_BLE_MAC);
 
   if (!client->connect(addr, true, true, false)) {
     Serial.println("❌ Connect failed");
@@ -292,7 +270,7 @@ static void sendBasic03() {
 }
 
 bool startBleConnect() {
-  NimBLEAddress addr(std::string(TARGET_MAC), BLE_ADDR_PUBLIC);
+  NimBLEAddress addr(std::string(Vehicle::BMS_BLE_MAC), BLE_ADDR_PUBLIC);
 
   if (!client) {
     client = NimBLEDevice::createClient();
@@ -312,11 +290,9 @@ void loop() {
   if (now - lastBroadcast >= 1000) {
     lastBroadcast = now;
     pendingMessage.type = TYPE_BMS;
-    esp_err_t res = esp_now_send(broadcast_mac, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
+    esp_err_t res = esp_now_send(Vehicle::BMS_DEST_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
     Serial.print("  |  ESP-NOW send: ");
     Serial.println(res == ESP_OK ? "OK" : String("ERR ") + res);
-
-    sendBmsOverUart(pendingMessage);
 
     Serial.printf(
           "BMS: V=%ld.%02ldV  I=%ld.%02ldA  SOC=%u%%  Rem=%ld.%02ldAh  T=%ld.%1ldC\n",

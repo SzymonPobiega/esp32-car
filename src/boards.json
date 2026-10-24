@@ -1,0 +1,59 @@
+{
+  "_comment": "Physical boards, keyed by the MAC esptool reports. flash.ps1 uses this to pick the sketch, vehicle and board settings. Entries with an empty sketch or fqbn must be completed before flashing.",
+  "boards": {
+    "30:ed:a0:e2:35:14": {
+      "name": "Toyota dashboard (P4)",
+      "vehicle": "Toyota",
+      "sketch": "ToyotaMonitor",
+      "fqbn": "esp32:esp32:esp32p4:PSRAM=enabled,USBMode=hwcdc,CDCOnBoot=cdc"
+    },
+    "9c:13:9e:c3:ff:60": {
+      "name": "Toyota ESP-NOW modem (C6, flash via FTDI in download mode)",
+      "vehicle": "Toyota",
+      "sketch": "EspNowUartBridge",
+      "fqbn": "esp32:esp32:esp32c6"
+    },
+    "88:57:21:c0:9d:94": {
+      "name": "Toyota TPMS connector",
+      "vehicle": "Toyota",
+      "sketch": "TpmsConnector",
+      "fqbn": "esp32:esp32:esp32"
+    },
+    "a4:f0:0f:69:2d:78": {
+      "name": "Toyota OBD connector",
+      "vehicle": "Toyota",
+      "sketch": "ObdConnector",
+      "fqbn": "esp32:esp32:esp32"
+    },
+    "50:78:7d:13:22:f8": {
+      "name": "Volvo monitor (5\" S3)",
+      "vehicle": "Volvo",
+      "sketch": "VolvoMonitor",
+      "fqbn": ""
+    },
+    "d0:cf:13:06:79:a0": {
+      "name": "Volvo 7\" S3 display",
+      "vehicle": "Volvo",
+      "sketch": "",
+      "fqbn": ""
+    },
+    "94:51:dc:47:ae:c4": {
+      "name": "Volvo camera controller (LilyGO)",
+      "vehicle": "Volvo",
+      "sketch": "VolvoCameraController",
+      "fqbn": ""
+    },
+    "e0:8c:fe:75:da:54": {
+      "name": "Volvo work lights controller (LilyGO)",
+      "vehicle": "Volvo",
+      "sketch": "VolvoWorkLightsController",
+      "fqbn": ""
+    },
+    "d4:e9:f4:a8:7e:34": {
+      "name": "Volvo Shelly bridge",
+      "vehicle": "Volvo",
+      "sketch": "ShellyConnectorUartBridge",
+      "fqbn": ""
+    }
+  }
+}

@@ -1,4 +1,5 @@
 #include "tpms_data.hpp"
+#include "ContractsInclude.hpp"
 
 namespace tpms {
 
@@ -9,13 +10,16 @@ volatile bool     hasData                 = false;
 volatile uint32_t lastUpdated[kMaxSensors]    = {0};
 volatile uint32_t last_update                 = 0;
 
+static_assert(sizeof(Vehicle::TPMS_SENSORS) / sizeof(Vehicle::TPMS_SENSORS[0]) <= kMaxSensors,
+              "More TPMS sensors in the vehicle profile than gauges");
+
+// Gauge index of a sensor (Vehicle::TPMS_SENSORS order), kMaxSensors if it is not ours
 uint32_t getIndex(uint32_t sensor)
 {
-    if (sensor == 7549971)  return 0;
-    else if (sensor == 1126691)  return 1;
-    else if (sensor == 14554163) return 2;
-    else if (sensor == 4592707)  return 3;
-    return 0;
+    for (uint32_t i = 0; i < sizeof(Vehicle::TPMS_SENSORS) / sizeof(Vehicle::TPMS_SENSORS[0]); i++) {
+        if (Vehicle::TPMS_SENSORS[i] == sensor) return i;
+    }
+    return kMaxSensors;
 }
 
 bool handleTpms(const TpmsPacket& pkt) {

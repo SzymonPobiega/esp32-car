@@ -36,9 +36,13 @@ String shellyProfile = "";
 unsigned long lastPollMs = 0;
 const unsigned long pollIntervalMs = 1000;
 
-// UART parser buffer
+// UART parser: frames from the bridge are [len][payload], payload starts with the int16 type
 static uint8_t uartRxBuf[64];
 static size_t uartRxLen = 0;
+static size_t uartFrameLen = 0;           // 0 = waiting for the length byte
+static unsigned long uartLastByteMs = 0;
+// A frame arrives in one burst; a gap this long inside a frame means we lost sync
+static const unsigned long uartFrameGapMs = 50;
 
 void stopWiFiForSleep() {
   WiFi.disconnect(true, true);
@@ -374,36 +378,56 @@ void handleLightsSwitchPacket(const LightsSwitchPacket& pkt) {
   setShellyLightState(zone, state);
 }
 
+void handleUartFrame(const uint8_t* data, size_t len) {
+  int16_t type;
+  if (len < sizeof(type)) {
+    return;
+  }
+  memcpy(&type, data, sizeof(type));
+
+  if (type == TYPE_LIGHT_SWITCH && len == sizeof(LightsSwitchPacket)) {
+    LightsSwitchPacket pkt;
+    memcpy(&pkt, data, sizeof(pkt));
+    handleLightsSwitchPacket(pkt);
+  } else {
+    Serial.printf("UART frame ignored: type=%d len=%u\n", type, (unsigned)len);
+  }
+}
+
 void processUartRx() {
+  unsigned long now = millis();
+
+  // Drop a partial frame that stalled, the next byte starts a new frame
+  if (uartFrameLen != 0 && now - uartLastByteMs > uartFrameGapMs) {
+    Serial.printf("UART partial frame dropped (%u of %u bytes)\n",
+                  (unsigned)uartRxLen, (unsigned)uartFrameLen);
+    uartFrameLen = 0;
+    uartRxLen = 0;
+  }
+
   while (U.available() > 0) {
-    lastUartActivityMs = millis();
-
-    if (uartRxLen >= sizeof(uartRxBuf)) {
-      uartRxLen = 0;
-    }
-
     int b = U.read();
     if (b < 0) {
       break;
     }
+    lastUartActivityMs = now;
+    uartLastByteMs = now;
+
+    if (uartFrameLen == 0) {
+      // Length byte; one that cannot be a frame we handle is noise, skip it
+      if (b == 0 || (size_t)b > sizeof(uartRxBuf)) {
+        continue;
+      }
+      uartFrameLen = (size_t)b;
+      uartRxLen = 0;
+      continue;
+    }
 
     uartRxBuf[uartRxLen++] = (uint8_t)b;
-
-    while (uartRxLen >= sizeof(LightsSwitchPacket)) {
-      LightsSwitchPacket pkt;
-      memcpy(&pkt, uartRxBuf, sizeof(pkt));
-
-      if (pkt.type == TYPE_LIGHT_SWITCH) {
-        handleLightsSwitchPacket(pkt);
-
-        size_t remaining = uartRxLen - sizeof(pkt);
-        memmove(uartRxBuf, uartRxBuf + sizeof(pkt), remaining);
-        uartRxLen = remaining;
-      } else {
-        // Unknown alignment or unknown packet type, drop one byte and resync
-        memmove(uartRxBuf, uartRxBuf + 1, uartRxLen - 1);
-        uartRxLen--;
-      }
+    if (uartRxLen == uartFrameLen) {
+      handleUartFrame(uartRxBuf, uartRxLen);
+      uartFrameLen = 0;
+      uartRxLen = 0;
     }
   }
 }

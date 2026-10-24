@@ -69,16 +69,9 @@ class MyScanCallbacks : public NimBLEScanCallbacks {
             pendingMessage.temp     = temp;
             pendingMessage.sequence++;
 
-            esp_err_t res = esp_now_send(P4_4_1_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
+            esp_err_t res = esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
             Serial.print("  |  ESP-NOW send: ");
             Serial.println(res == ESP_OK ? "OK" : String("ERR ") + res);
-
-            const uint8_t len = (uint8_t)(1 + sizeof(TpmsPacket));
-            Serial2.write(SYNC1);
-            Serial2.write(SYNC2);
-            Serial2.write(len);
-            Serial2.write(TYPE_TPMS);
-            Serial2.write((const uint8_t*)&pendingMessage, sizeof(TpmsPacket));
 
         } else {
             Serial.print("  |  Payload too short (");
@@ -98,10 +91,7 @@ class MyScanCallbacks : public NimBLEScanCallbacks {
 void setup() {
     Serial.begin(115200);
     Serial.println();
-    Serial.println("TPMS gateway: scanning TPMS* and forwarding via ESP-NOW.");
-
-    // Binary link to other ESP over UART2 on GPIO16/17
-    Serial2.begin(115200, SERIAL_8N1, 16, 17);
+    Serial.printf("TPMS gateway (%s): scanning TPMS* and forwarding via ESP-NOW.\n", Vehicle::NAME);
 
     //Init the sequence to 1 so that the Monitor can detect the first packet
     pendingMessage.sequence = 1;
@@ -135,7 +125,7 @@ void setup() {
 
     // Add peer (your ESP32-S3)
     esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, P4_4_1_MAC, 6);
+    memcpy(peerInfo.peer_addr, Vehicle::DISPLAY_MAC, 6);
     peerInfo.channel = 0;   // 0 = current Wi-Fi channel
     peerInfo.encrypt = false;
 
@@ -171,5 +161,5 @@ void loop() {
     delay(5000);
 
     //PING - send last received measurement (sensorId 0 until the first sensor is received)
-    esp_err_t res = esp_now_send(P4_4_1_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
+    esp_err_t res = esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
 }

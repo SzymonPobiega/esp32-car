@@ -43,13 +43,13 @@ static void onLightChanged(CamperUI::LightGroup group, uint8_t idx, bool on)
     pkt.type = Contracts::TYPE_LIGHT_SWITCH;
     pkt.zone = (int16_t)idx + 1;
     pkt.state = (int16_t)on;
-    res = espnow_send_cached(Contracts::SHELLY_BRIDGE_MAC, (uint8_t*)&pkt, sizeof(pkt));
+    res = espnow_send_cached(Vehicle::SHELLY_BRIDGE_MAC, (uint8_t*)&pkt, sizeof(pkt));
   } else {
     Contracts::WorkLightsSwitchPacket pkt;
     pkt.type = Contracts::TYPE_WORKLIGHT_SWITCH;
     pkt.input = (int16_t)idx + 1;
     pkt.state = (int16_t)on;
-    res = espnow_send_cached(Contracts::LILYGO_WORKLIGHT_MAC, (uint8_t*)&pkt, sizeof(pkt));
+    res = espnow_send_cached(Vehicle::LILYGO_WORKLIGHT_MAC, (uint8_t*)&pkt, sizeof(pkt));
   }
 
   if (res != ESP_OK) {
@@ -364,7 +364,7 @@ void on_camera_selected(uint8_t id)
   pkt.type = Contracts::TYPE_CAMERA_SELECT;
   pkt.input  = (int16_t)id+1;
 
-  esp_err_t res = espnow_send_cached(Contracts::LILYGO_CAMERA_MAC, (uint8_t*)&pkt, sizeof(pkt));
+  esp_err_t res = espnow_send_cached(Vehicle::LILYGO_CAMERA_MAC, (uint8_t*)&pkt, sizeof(pkt));
   if (res != ESP_OK) {
     Serial.print("ESP-NOW send: ");
     Serial.println(res == ESP_OK ? "OK" : String("ERR ") + res);
@@ -604,7 +604,7 @@ bool initEspNow()
 
     // Add peer (your ESP32-S3)
     esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, Contracts::LILYGO_CAMERA_MAC, 6);
+    memcpy(peerInfo.peer_addr, Vehicle::LILYGO_CAMERA_MAC, 6);
     peerInfo.channel = 0;   // 0 = current Wi-Fi channel
     peerInfo.encrypt = false;
 
@@ -613,12 +613,12 @@ bool initEspNow()
         while (true) { delay(1000); }
     }
 
-    memcpy(peerInfo.peer_addr, Contracts::LILYGO_WORKLIGHT_MAC, 6);
+    memcpy(peerInfo.peer_addr, Vehicle::LILYGO_WORKLIGHT_MAC, 6);
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
         Serial.println("Failed to add work lights peer!");
     }
 
-    memcpy(peerInfo.peer_addr, Contracts::SHELLY_BRIDGE_MAC, 6);
+    memcpy(peerInfo.peer_addr, Vehicle::SHELLY_BRIDGE_MAC, 6);
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
         Serial.println("Failed to add Shelly bridge peer!");
     }

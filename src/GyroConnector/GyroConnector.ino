@@ -16,7 +16,6 @@ static NimBLEUUID SVC_FFE5("0000FFE5-0000-1000-8000-00805F9A34FB");
 static NimBLEUUID CH_FFE4("0000FFE4-0000-1000-8000-00805F9A34FB");
 static NimBLEUUID CH_FFE9("0000FFE9-0000-1000-8000-00805F9A34FB");
 
-static const char* TARGET_MAC = "e0:3b:b5:fe:27:8e";
 
 static NimBLEClient* client = nullptr;
 static NimBLERemoteCharacteristic* chNotify = nullptr;
@@ -36,7 +35,7 @@ void onEspNowSent(const wifi_tx_info_t* tx_info, esp_now_send_status_t status) {
 void setup() {
     Serial.begin(115200);
     Serial.println();
-    Serial.println("GYRO gateway");
+    Serial.printf("GYRO gateway (%s)\n", Vehicle::NAME);
 
     WiFi.mode(WIFI_STA);        // required for ESP-NOW
     WiFi.disconnect();          // just to be safe
@@ -65,7 +64,7 @@ void setup() {
 
     // Add peer (your ESP32-S3)
     esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, Contracts::S3_5_1_MAC, 6);
+    memcpy(peerInfo.peer_addr, Vehicle::DISPLAY_MAC, 6);
     peerInfo.channel = 0;   // 0 = current Wi-Fi channel
     peerInfo.encrypt = false;
 
@@ -160,7 +159,7 @@ static void consumeFrames() {
         pkt.pitch_deg = (int16_t)(pitch * 100.0f);
         pkt.yaw_deg   = (int16_t)(yaw   * 100.0f);
         pkt.height = height;
-        esp_now_send(Contracts::S3_5_1_MAC, (uint8_t*)&pkt, sizeof(pkt));
+        esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t*)&pkt, sizeof(pkt));
       }
 
       rxBuf.erase(rxBuf.begin(), rxBuf.begin() + FRAME_LEN);
@@ -188,7 +187,7 @@ static void consumeFrames() {
         // GyroHeightPacket pkt;
         // pkt.type = Contracts::TYPE_GYRO_HEIGHT;
         // pkt.height  = (int16_t)height_m;
-        // esp_now_send(Contracts::S3_5_1_MAC, (uint8_t*)&pkt, sizeof(pkt));
+        // esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t*)&pkt, sizeof(pkt));
       }
 
       rxBuf.erase(rxBuf.begin(), rxBuf.begin() + FRAME_LEN);
@@ -214,14 +213,14 @@ static void requestAltitude() {
 }
 
 static bool connectWT901() {
-  NimBLEAddress addr(std::string(TARGET_MAC), BLE_ADDR_RANDOM );
+  NimBLEAddress addr(std::string(Vehicle::GYRO_BLE_MAC), BLE_ADDR_RANDOM );
   if (!client) {
     client = NimBLEDevice::createClient();
     client->setConnectionParams(24, 40, 0, 2000);
   }
 
   Serial.print("Connecting to ");
-  Serial.println(TARGET_MAC);
+  Serial.println(Vehicle::GYRO_BLE_MAC);
 
   client->connect(addr);
   if (!client->isConnected()) {
@@ -270,6 +269,17 @@ static bool connectWT901() {
 
 
 void loop() {
+  // No gyro installed in this vehicle yet
+  if (Vehicle::GYRO_BLE_MAC[0] == '\0') {
+    static bool reported = false;
+    if (!reported) {
+      Serial.printf("No gyro configured for the %s, idle\n", Vehicle::NAME);
+      reported = true;
+    }
+    delay(1000);
+    return;
+  }
+
   if (!client || !client->isConnected()) {
      connectWT901();
   } else {

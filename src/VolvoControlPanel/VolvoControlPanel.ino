@@ -72,13 +72,13 @@ static bool initEspNow()
     peerInfo.channel = 0;
     peerInfo.encrypt = false;
 
-    memcpy(peerInfo.peer_addr, Contracts::LILYGO_WORKLIGHT_MAC, 6);
+    memcpy(peerInfo.peer_addr, Vehicle::LILYGO_WORKLIGHT_MAC, 6);
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
         Serial.println("❌ Failed to add LILYGO peer!");
         return false;
     }
 
-    memcpy(peerInfo.peer_addr, Contracts::SHELLY_BRIDGE_MAC, 6);
+    memcpy(peerInfo.peer_addr, Vehicle::SHELLY_BRIDGE_MAC, 6);
     if (esp_now_add_peer(&peerInfo) != ESP_OK) {
         Serial.println("❌ Failed to add SHELLY peer!");
         return false;
@@ -214,7 +214,7 @@ static void onLightChanged(CamperUI::LightGroup group, uint8_t idx, bool on) {
         pkt.zone = (int16_t)idx+1;
         pkt.state = (int16_t)on;
 
-        esp_err_t res = espnow_send_cached(Contracts::SHELLY_BRIDGE_MAC, (uint8_t*)&pkt, sizeof(pkt));
+        esp_err_t res = espnow_send_cached(Vehicle::SHELLY_BRIDGE_MAC, (uint8_t*)&pkt, sizeof(pkt));
         if (res != ESP_OK) {
             Serial.print("ESP-NOW send: ");
             Serial.println(res == ESP_OK ? "OK" : String("ERR ") + res);
@@ -226,7 +226,7 @@ static void onLightChanged(CamperUI::LightGroup group, uint8_t idx, bool on) {
         pkt.input = (int16_t)idx+1;
         pkt.state = (int16_t)on;
 
-        esp_err_t res = espnow_send_cached(Contracts::LILYGO_WORKLIGHT_MAC, (uint8_t*)&pkt, sizeof(pkt));
+        esp_err_t res = espnow_send_cached(Vehicle::LILYGO_WORKLIGHT_MAC, (uint8_t*)&pkt, sizeof(pkt));
         if (res != ESP_OK) {
             Serial.print("ESP-NOW send: ");
             Serial.println(res == ESP_OK ? "OK" : String("ERR ") + res);

@@ -21,9 +21,9 @@
 using namespace Contracts;
 
 // -------------------- USER CONFIG --------------------
-// Set to the dongle's BLE address (e.g. "aa:bb:cc:dd:ee:ff") to pin it. Empty = auto-detect
-// by name or by a known ELM327 BLE service. Every device seen during the scan is logged.
-static const char *DONGLE_MAC = "";
+// The dongle's BLE address is Vehicle::OBD_DONGLE_MAC (Shared/Vehicles/Toyota.hpp). Empty =
+// auto-detect by name or by a known ELM327 BLE service. Every device seen during the scan is logged.
+static const char *DONGLE_MAC = Vehicle::OBD_DONGLE_MAC;
 
 static const char *const DONGLE_NAME_HINTS[] = {
   "OBD", "ELM", "VLINK", "V-LINK", "VGATE", "VEEPEAK", "KONNWEI", "IOS-", "ANDROID-"
@@ -87,7 +87,7 @@ bool initEspNow() {
   esp_now_register_send_cb(onEspNowSent);
 
   esp_now_peer_info_t peerInfo = {};
-  memcpy(peerInfo.peer_addr, P4_4_1_MAC, 6);
+  memcpy(peerInfo.peer_addr, Vehicle::DISPLAY_MAC, 6);
   peerInfo.channel = 0;   // 0 = current Wi-Fi channel
   peerInfo.encrypt = false;
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
@@ -99,7 +99,7 @@ bool initEspNow() {
 
 void sendPacket() {
   packet.type = TYPE_OBD;
-  esp_now_send(P4_4_1_MAC, (uint8_t *)&packet, sizeof(packet));
+  esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t *)&packet, sizeof(packet));
   lastSendMs = millis();
 }
 
