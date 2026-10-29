@@ -21,8 +21,8 @@ namespace Vehicle {
 
   inline constexpr const char *BMS_BLE_MAC = "A5:C2:37:2B:DC:A1";
 
-  // Not installed yet; empty = GyroConnector stays idle
-  inline constexpr const char *GYRO_BLE_MAC = "";
+  // WitMotion WT901BLE68 (static random address); empty = GyroConnector stays idle
+  inline constexpr const char *GYRO_BLE_MAC = "db:dd:a8:10:0b:fa";
 
   // OBD dongle; empty = auto-detect by name / known ELM service
   inline constexpr const char *OBD_DONGLE_MAC = "";

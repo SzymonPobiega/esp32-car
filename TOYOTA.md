@@ -11,12 +11,12 @@ flowchart LR
   TPMS["TPMS sensors (4)"] -- "BLE advert" --> TC["TpmsConnector"]
   JBD["JBD BMS"] -- "BLE GATT" --> BC["BmsConnector"]
   ELM["ELM327 BLE dongle"] -- "BLE GATT (serial)" --> OC["ObdConnector"]
-  WT["WT901 IMU<br/>(not installed yet)"] -. "BLE GATT" .-> GC["GyroConnector"]
+  WT["WT901BLE68 IMU"] -- "BLE GATT" --> GC["GyroConnector"]
   ECU["Engine + transmission ECUs"] -- "OBD-II CAN" --> ELM
   TC -- "ESP-NOW unicast<br/>TPMS" --> C6["EspNowUartBridge<br/>ESP32-C6 modem"]
   BC -- "ESP-NOW unicast<br/>BMS" --> C6
   OC -- "ESP-NOW unicast<br/>OBD" --> C6
-  GC -. "ESP-NOW unicast<br/>GYRO_ANGLE" .-> C6
+  GC -- "ESP-NOW unicast<br/>GYRO_ANGLE" --> C6
   C6 -- "UART 115200<br/>AA 55 frames + CRC" --> P4["ToyotaMonitor<br/>ESP32-P4"]
 ```
 
@@ -27,7 +27,7 @@ flowchart LR
 | [TpmsConnector](src/TpmsConnector/README.md) | ESP32 | TPMS gateway | BLE scan (`TPMS*` adverts) | ESP-NOW unicast to the modem |
 | [BmsConnector](src/BmsConnector/README.md) | ESP32 | House battery gateway | BLE GATT to JBD BMS | ESP-NOW unicast to the modem |
 | [ObdConnector](src/ObdConnector/README.md) | ESP32 | Transmission and boost readings | BLE ELM327 dongle | ESP-NOW unicast to the modem |
-| [GyroConnector](src/GyroConnector/README.md) | ESP32 | Attitude gateway | BLE GATT to WT901 | ESP-NOW unicast to the modem; idle until a gyro address is configured |
+| [GyroConnector](src/GyroConnector/README.md) | ESP32 | Attitude gateway | BLE GATT to WT901 | ESP-NOW unicast to the modem |
 | [EspNowUartBridge](src/EspNowUartBridge/README.md) | ESP32-C6 (on the P4 board) | ESP-NOW modem | ESP-NOW | UART to the P4 |
 | [ToyotaMonitor](src/ToyotaMonitor/README.md) | ESP32-P4, 480×800 MIPI-DSI | Dashboard | UART from the modem | Display |
 
@@ -36,7 +36,7 @@ flowchart LR
 ToyotaMonitor has three tabs and a status bar that is visible on every tab:
 
 - **Gauges.** Four tyre pressure gauges with temperature, and the seconds since each sensor's last reading.
-- **Tab2.** Pitch and roll indicators, driven by the gyro once one is installed.
+- **Tab2.** Pitch and roll indicators, driven by the gyro.
 - **Transmission.** Current gear, torque converter lockup, ATF pan and outlet temperatures (orange from 105 °C, red from 115 °C), boost with a 0–2 bar bar, and MAP.
 - **Status bar.** House battery values (V, A, SOC, Ah, °C), greyed out after 10 s without data, and four connector status lights: TPMS, OBD, BMS and GYRO. A light is grey before the first packet, green with a flash on each packet, and red when packets stop (15 s for TPMS and OBD, 10 s for BMS and gyro).
 
@@ -61,7 +61,7 @@ From [`src/Shared/Vehicles/Toyota.hpp`](src/Shared/Vehicles/Toyota.hpp):
 | Sensor | Address / IDs |
 | --- | --- |
 | BMS | `A5:C2:37:2B:DC:A1` |
-| Gyro (WT901) | not installed yet (empty) |
+| Gyro (WT901BLE68) | `db:dd:a8:10:0b:fa` |
 | OBD dongle | auto-detected (empty) |
 | TPMS | 4 sensors: 7549971, 1126691, 14554163, 4592707 (gauge order) |
 
@@ -78,5 +78,4 @@ Physical boards and their board settings are listed in [`src/boards.json`](src/b
 
 - **Gear and lockup decoding is unverified** on the 2008 VDJ200 (`21DA`, bits taken from related Toyota gearboxes). The gear tile shows the raw code. See [`src/Toyota Techstream PIDs.pdf`](src/Toyota%20Techstream%20PIDs.pdf).
 - **One TPMS sequence for all sensors.** If TpmsConnector reboots while the dashboard stays on, its sequence restarts at 1 and readings are ignored until the dashboard restarts too.
-- **Gyro not installed.** GyroConnector stays idle on the Toyota until `GYRO_BLE_MAC` is set in the profile; Tab2 shows fixed values until then.
 - **Opening the P4's USB serial port resets it**, which clears the readings shown on the dashboard.

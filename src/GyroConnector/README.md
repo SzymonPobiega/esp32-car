@@ -1,13 +1,13 @@
 # GyroConnector
 
-Reads attitude (roll, pitch, yaw) and altitude from a WitMotion WT901 BLE IMU and sends them over ESP-NOW at most once a second. Used in both vehicles; on the Toyota the gyro is not installed yet, so the connector stays idle.
+Reads attitude (roll, pitch, yaw) and altitude from a WitMotion WT901 BLE IMU and sends them over ESP-NOW at most once a second. Used in both vehicles.
 
 - **Board:** ESP32 (classic), `esp32:esp32:esp32`.
 - **Vehicle:** selected at build time (`-DVEHICLE_TOYOTA` / `-DVEHICLE_VOLVO`, see the [main README](../../README.md#vehicle-profiles)).
 
 ## Configuration
 
-`Vehicle::GYRO_BLE_MAC` in the vehicle profile: `e0:3b:b5:fe:27:8e` on the Volvo, empty on the Toyota. When it is empty the connector logs `No gyro configured` once and does nothing else. Packets go to `Vehicle::DISPLAY_MAC`.
+`Vehicle::GYRO_BLE_MAC` in the vehicle profile: `e0:3b:b5:fe:27:8e` on the Volvo, `db:dd:a8:10:0b:fa` (WT901BLE68) on the Toyota. Both are random static addresses. When it is empty the connector logs `No gyro configured` once and does nothing else. Packets go to `Vehicle::DISPLAY_MAC`.
 
 ## How it works
 

@@ -25,6 +25,12 @@
       "sketch": "ObdConnector",
       "fqbn": "esp32:esp32:esp32"
     },
+    "d4:e9:f4:e6:c4:74": {
+      "name": "Toyota gyro connector",
+      "vehicle": "Toyota",
+      "sketch": "GyroConnector",
+      "fqbn": "esp32:esp32:esp32"
+    },
     "50:78:7d:13:22:f8": {
       "name": "Volvo monitor (5\" S3)",
       "vehicle": "Volvo",

@@ -26,7 +26,7 @@ Every module is an Arduino sketch in `src/`. Each has its own README.
 | --- | --- | :---: | :---: |
 | [TpmsConnector](src/TpmsConnector/README.md) | BLE TPMS sensors → ESP-NOW | ✓ | ✓ |
 | [BmsConnector](src/BmsConnector/README.md) | JBD battery BMS (BLE) → ESP-NOW | ✓ | ✓ |
-| [GyroConnector](src/GyroConnector/README.md) | WitMotion WT901 IMU (BLE) → ESP-NOW | ✓ | ✓ (gyro not installed yet) |
+| [GyroConnector](src/GyroConnector/README.md) | WitMotion WT901 IMU (BLE) → ESP-NOW | ✓ | ✓ |
 | [ObdConnector](src/ObdConnector/README.md) | ELM327 BLE OBD-II dongle → ESP-NOW | | ✓ |
 | [ToyotaMonitor](src/ToyotaMonitor/README.md) | Toyota dashboard (ESP32-P4) | | ✓ |
 | [EspNowUartBridge](src/EspNowUartBridge/README.md) | ESP-NOW modem on the C6 next to the P4 | | ✓ |
