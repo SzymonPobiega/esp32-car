@@ -2,7 +2,9 @@
 
 ESP32 firmware for in-vehicle dashboards in two vehicles: a **Volvo camper** and a **Toyota Land Cruiser**. Small headless ESP32 boards read sensors (tyre pressure, attitude, house battery, OBD-II) and send the readings over ESP-NOW to touchscreen dashboards. On the Volvo, the dashboards also switch lights and camera inputs.
 
-![Monitor](tpms-screen.jpg)
+<img width="300" alt="tpms" src="https://github.com/user-attachments/assets/58a3a404-46af-4feb-87bc-5369a0e732ce" />
+<img width="300" alt="incline" src="https://github.com/user-attachments/assets/a97219ed-99d8-41fe-87e0-4f7af3f9b38a" />
+<img width="300" alt="gearbox" src="https://github.com/user-attachments/assets/951e9b44-a6b3-45d5-aed8-bfcaf02f4acb" />
 
 ## Why?
 
