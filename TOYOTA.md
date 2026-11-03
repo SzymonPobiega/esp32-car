@@ -33,12 +33,20 @@ flowchart LR
 
 ## Dashboard
 
-ToyotaMonitor has three tabs and a status bar that is visible on every tab:
+ToyotaMonitor has four tabs (TYRES, GYRO, TRANS, HEAT), a diagnostics page behind the cog, a round-robin button that rotates the tabs every 30 s, and a status bar that is visible on every page. Swiping left or right also changes tab. The screenshots below show made-up readings from the demo mode (`UI_DEMO_PAGE`), except the diagnostics, which were recorded on the bench.
 
-- **Gauges.** Four tyre pressure gauges with temperature, and the seconds since each sensor's last reading.
-- **Tab2.** Pitch and roll indicators, driven by the gyro.
+<img width="240" alt="Startup diagnostics" src="images/toyota/diagnostics.gif" />
+<img width="240" alt="Tyres tab" src="images/toyota/tyres.png" />
+<img width="240" alt="Gyro tab" src="images/toyota/gyro.png" />
+<img width="240" alt="Transmission tab" src="images/toyota/transmission.png" />
+<img width="240" alt="Heater tab" src="images/toyota/heater.png" />
+
+- **Diagnostics.** Shown at startup: checks the modem, each connector, the diesel heater, the OBD dongle and the ECU link, then scans the engine, gearbox and ABS/VSC modules for fault codes. If everything passes, the dashboard moves on to the tabs; otherwise it stays here, and tapping the cog runs the check again. The animation shortens two 30 s timeouts.
+- **Tyres.** Four tyre pressure gauges with temperature, and the seconds since each sensor's last reading.
+- **Gyro.** Pitch and roll indicators, driven by the gyro.
 - **Transmission.** Current gear, torque converter lockup, ATF pan and outlet temperatures (orange from 105 °C, red from 115 °C), boost with a 0–2 bar bar, and MAP.
-- **Status bar.** House battery values (V, A, SOC, Ah, °C), greyed out after 10 s without data, and four connector status lights: TPMS, OBD, BMS and GYRO. A light is grey before the first packet, green with a flash on each packet, and red when packets stop (15 s for TPMS and OBD, 10 s for BMS and gyro).
+- **Heater.** State, mode, setting, supply voltage, and case and cabin temperatures of the HCalory diesel heater. Hold the power button to start or stop it; level / thermostat mode and `-` / `+` change the setting. The morning run time and arming are stored on the heater connector but don't run yet (no RTC).
+- **Status bar.** House battery values (V, A, SOC, °C), greyed out after 10 s without data, and five connector status lights: TPMS, OBD, BMS, GYRO and HEAT. A light is grey before the first packet, green with a flash on each packet, and red when packets stop (15 s for TPMS and OBD, 10 s for BMS and gyro).
 
 ## Communication links
 

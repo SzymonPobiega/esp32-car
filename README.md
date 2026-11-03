@@ -20,6 +20,16 @@ ESP32 firmware for in-vehicle dashboards in two vehicles: a **Volvo camper** and
 | Volvo camper | [VOLVO.md](VOLVO.md) | VolvoMonitor (ESP32-S3) and VolvoControlPanel (ESP32-S3) |
 | Toyota Land Cruiser | [TOYOTA.md](TOYOTA.md) | ToyotaMonitor (ESP32-P4) with an ESP32-C6 ESP-NOW modem |
 
+### Toyota dashboard
+
+Startup diagnostics, then the tyres, gyro, transmission and heater tabs (made-up readings):
+
+<img width="240" alt="Startup diagnostics" src="images/toyota/diagnostics.gif" />
+<img width="240" alt="Tyres tab" src="images/toyota/tyres.png" />
+<img width="240" alt="Gyro tab" src="images/toyota/gyro.png" />
+<img width="240" alt="Transmission tab" src="images/toyota/transmission.png" />
+<img width="240" alt="Heater tab" src="images/toyota/heater.png" />
+
 ## Modules
 
 Every module is an Arduino sketch in `src/`. Each has its own README.
