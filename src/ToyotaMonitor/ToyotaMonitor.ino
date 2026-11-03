@@ -43,6 +43,13 @@ static void start_diagnostics();
 // with made-up readings, refreshed every second
 //#define UI_DEMO_PAGE 2
 
+// Screen recording (for an animated GIF of the startup diagnostics): uncomment to record the
+// screen from boot into PSRAM, then read it out over USB with 'R' and 'F'
+//#define UI_RECORD
+#ifdef UI_RECORD
+static void rec_flush(const lv_area_t *area, const lv_color_t *color_p);
+#endif
+
 bsp_lcd_handles_t lcd_panels;
 
 st7701_lcd lcd = st7701_lcd(LCD_RST);
@@ -75,6 +82,9 @@ void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color
   const int offsety1 = area->y1;
   const int offsety2 = area->y2;
   lcd.lcd_draw_bitmap(offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, &color_p->full);
+#ifdef UI_RECORD
+  rec_flush(area, color_p);
+#endif
   // lv_disp_flush_ready(disp); // 告诉lvgl刷新完成
 }
 
@@ -218,6 +228,9 @@ void setup()
   Serial.println("start demo");
 
   build_ui();
+#ifdef UI_RECORD
+  start_recording();
+#endif
 
   init_gauge_timer();
   modem::begin();
@@ -655,6 +668,107 @@ static void send_snapshot()
   }
 }
 
+#ifdef UI_RECORD
+// Mirrors what the display driver draws, and every REC_INTERVAL_MS stores the rows that
+// changed since the previous frame. 'R' stops recording and replies
+// "REC <w> <h> <frames> <avg ms per frame>\n". 'F' + frame index (2 bytes LE) replies
+// "FRAME <i> <ms> <len> <sum>\n" + len bytes: [rows:2] then rows x [y:2][row pixels],
+// sum = byte sum, so the reader can retry a bad one.
+static const uint32_t REC_INTERVAL_MS = 125;   // the diagnostics cursor blinks every 250 ms
+static const uint32_t REC_MAX_FRAMES = 1200;
+static const size_t REC_RESERVE = 4 * 1024 * 1024;   // PSRAM left for everything else
+static const lv_coord_t REC_W = LCD_H_RES, REC_H = LCD_V_RES;
+static const size_t REC_ROW = REC_W * sizeof(lv_color_t);
+
+static uint8_t *rec_buf, *rec_prev, *rec_screen;
+static size_t rec_cap, rec_len;
+static uint32_t rec_offset[REC_MAX_FRAMES], rec_ms[REC_MAX_FRAMES];
+static uint32_t rec_frames, rec_cost_total;
+static bool rec_on;
+
+// Called from the flush callback with the area LVGL just drew
+static void rec_flush(const lv_area_t *area, const lv_color_t *color_p)
+{
+  if (!rec_on) return;
+  size_t w = (area->x2 - area->x1 + 1) * sizeof(lv_color_t);
+  for (int y = area->y1; y <= area->y2; y++, color_p += area->x2 - area->x1 + 1) {
+    memcpy(rec_screen + y * REC_ROW + area->x1 * sizeof(lv_color_t), color_p, w);
+  }
+}
+
+static void rec_put16(uint16_t v)
+{
+  rec_buf[rec_len++] = v & 0xFF;
+  rec_buf[rec_len++] = v >> 8;
+}
+
+static void rec_timer_cb(lv_timer_t *)
+{
+  if (!rec_on) return;
+  uint32_t t0 = millis();
+  uint16_t changed = 0;
+  for (int y = 0; y < REC_H; y++) {
+    if (rec_frames == 0 || memcmp(rec_screen + y * REC_ROW, rec_prev + y * REC_ROW, REC_ROW) != 0) changed++;
+  }
+  if (rec_frames >= REC_MAX_FRAMES || rec_len + 2 + changed * (2 + REC_ROW) > rec_cap) {
+    rec_on = false;
+    return;
+  }
+  rec_offset[rec_frames] = rec_len;
+  rec_ms[rec_frames] = t0;
+  rec_put16(changed);
+  for (int y = 0; y < REC_H; y++) {
+    uint8_t *row = rec_screen + y * REC_ROW;
+    if (rec_frames != 0 && memcmp(row, rec_prev + y * REC_ROW, REC_ROW) == 0) continue;
+    rec_put16(y);
+    memcpy(rec_buf + rec_len, row, REC_ROW);
+    memcpy(rec_prev + y * REC_ROW, row, REC_ROW);
+    rec_len += REC_ROW;
+  }
+  rec_frames++;
+  rec_cost_total += millis() - t0;
+}
+
+static void start_recording()
+{
+  rec_prev = (uint8_t *)heap_caps_calloc(REC_H, REC_ROW, MALLOC_CAP_SPIRAM);
+  rec_screen = (uint8_t *)heap_caps_calloc(REC_H, REC_ROW, MALLOC_CAP_SPIRAM);
+  size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+  rec_cap = largest > REC_RESERVE ? largest - REC_RESERVE : 0;
+  rec_buf = rec_cap ? (uint8_t *)heap_caps_malloc(rec_cap, MALLOC_CAP_SPIRAM) : nullptr;
+  if (!rec_prev || !rec_screen || !rec_buf) {
+    Serial.println("REC: no memory");
+    return;
+  }
+  Serial.printf("REC: %u bytes\n", (unsigned)rec_cap);
+  rec_on = true;
+  lv_timer_create(rec_timer_cb, REC_INTERVAL_MS, nullptr);
+}
+
+static void send_rec_frame(uint32_t i)
+{
+  if (i >= rec_frames) {
+    Serial.println("FRAME none");
+    return;
+  }
+  uint32_t end = i + 1 < rec_frames ? rec_offset[i + 1] : rec_len;
+  const uint8_t *data = rec_buf + rec_offset[i];
+  uint32_t len = end - rec_offset[i], sum = 0;
+  for (uint32_t k = 0; k < len; k++) sum += data[k];
+  Serial.printf("FRAME %u %u %u %u\n", (unsigned)i, (unsigned)(rec_ms[i] - rec_ms[0]),
+                (unsigned)len, (unsigned)sum);
+  uint32_t sent = 0, start = millis();
+  while (sent < len && millis() - start < 10000) {
+    // Long bursts lose bytes now and then (the reader retries) and can crash the CDC driver
+    size_t n = len - sent < 256 ? len - sent : 256;
+    size_t w = Serial.write(data + sent, n);
+    Serial.flush();
+    sent += w;
+    delay(w == 0 ? 2 : 1);
+  }
+}
+#endif
+
 void loop()
 {
   static uint32_t last = millis();
@@ -669,6 +783,17 @@ void loop()
   while (Serial.available()) {
     int c = Serial.read();
     if (c == 'S') send_snapshot();
+#ifdef UI_RECORD
+    else if (c == 'R') {
+      rec_on = false;
+      Serial.printf("REC %d %d %u %u reset=%d\n", REC_W, REC_H, (unsigned)rec_frames,
+                    (unsigned)(rec_frames ? rec_cost_total / rec_frames : 0), (int)esp_reset_reason());
+    }
+    else if (c == 'F') {
+      uint8_t idx[2];
+      if (Serial.readBytes(idx, 2) == 2) send_rec_frame(idx[0] | (idx[1] << 8));
+    }
+#endif
     else if (c == 'P') {
       static const Sound *const startup[] = {
         &snd_reactor_online, &snd_sensors_online, &snd_all_systems_nominal, nullptr
