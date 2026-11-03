@@ -26,6 +26,9 @@ namespace Modem {
   static constexpr uint8_t KIND_ESPNOW_RX = 0x01;  // payload: EspNowRxHeader + ESP-NOW data
   static constexpr uint8_t KIND_HEARTBEAT = 0x02;  // payload: Heartbeat
 
+  // Host -> modem
+  static constexpr uint8_t KIND_ESPNOW_TX = 0x81;  // payload: EspNowTxHeader + ESP-NOW data
+
   // How often the modem sends a heartbeat, and when the host considers it gone
   static constexpr uint32_t HEARTBEAT_INTERVAL_MS = 1000;
   static constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 3500;
@@ -33,6 +36,10 @@ namespace Modem {
   struct PACKED EspNowRxHeader {
     uint8_t srcMac[6];
     int8_t  rssi;
+  };
+
+  struct PACKED EspNowTxHeader {
+    uint8_t dstMac[6];
   };
 
   struct PACKED Heartbeat {
@@ -77,6 +84,53 @@ namespace Modem {
     return HEADER_LEN + len + CRC_LEN;
   }
 
+  // Reassembles frames from a byte stream, one byte at a time
+  struct FrameParser {
+    enum Result { NONE, FRAME, CRC_ERROR, LENGTH_ERROR };
+
+    uint8_t kind = 0;
+    uint16_t len = 0;
+    uint8_t payload[MAX_PAYLOAD];
+
+    // FRAME when b completes a frame with a good CRC; kind, len and payload hold it
+    Result feed(uint8_t b) {
+      switch (state) {
+      case 0: if (b == SYNC1) state = 1; break;
+      case 1: state = b == SYNC2 ? 2 : b == SYNC1 ? 1 : 0; break;
+      case 2: kind = b; state = 3; break;
+      case 3: len = b; state = 4; break;
+      case 4:
+        len |= (uint16_t)b << 8;
+        if (len > MAX_PAYLOAD) {
+          state = 0;
+          return LENGTH_ERROR;
+        }
+        pos = 0;
+        state = len == 0 ? 6 : 5;
+        break;
+      case 5:
+        payload[pos++] = b;
+        if (pos == len) state = 6;
+        break;
+      case 6: rxCrc = b; state = 7; break;
+      case 7: {
+        rxCrc |= (uint16_t)b << 8;
+        state = 0;
+        uint8_t hdr[3] = { kind, (uint8_t)(len & 0xFF), (uint8_t)(len >> 8) };
+        uint16_t crc = crc16(crc16(CRC_INIT, hdr, sizeof(hdr)), payload, len);
+        return crc == rxCrc ? FRAME : CRC_ERROR;
+      }
+      }
+      return NONE;
+    }
+
+  private:
+    uint8_t state = 0;   // 0 sync1, 1 sync2, 2 kind, 3-4 len, 5 payload, 6-7 crc
+    uint16_t pos = 0;
+    uint16_t rxCrc = 0;
+  };
+
   static_assert(sizeof(EspNowRxHeader) == 7, "EspNowRxHeader must be 7 bytes");
+  static_assert(sizeof(EspNowTxHeader) == 6, "EspNowTxHeader must be 6 bytes");
   static_assert(sizeof(Heartbeat) == 23, "Heartbeat must be 23 bytes");
 }

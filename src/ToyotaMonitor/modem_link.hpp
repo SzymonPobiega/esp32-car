@@ -29,6 +29,10 @@ void begin();
 // ESP-NOW message is ready in out. Call repeatedly until it returns false.
 bool poll(Message& out);
 
+// Asks the modem to send data over ESP-NOW to dstMac (fire and forget: the modem
+// doesn't report delivery, so the receiver should acknowledge in its own packets)
+bool send(const uint8_t dstMac[6], const void* data, size_t len);
+
 // True if a heartbeat arrived within Modem::HEARTBEAT_TIMEOUT_MS
 bool modemAlive();
 

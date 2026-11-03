@@ -17,6 +17,9 @@ namespace Vehicle {
   // Single display, so BMS goes straight to the modem (acknowledged, with retries)
   inline constexpr const uint8_t (&BMS_DEST_MAC)[6] = MODEM_MAC;
 
+  // HeaterConnector; the dashboard sends it heater commands through the modem
+  inline constexpr uint8_t HEATER_CONNECTOR_MAC[] = { 0xD4, 0xE9, 0xF4, 0xE6, 0xCC, 0x90 };
+
   // ---- BLE sensors ----
 
   inline constexpr const char *BMS_BLE_MAC = "A5:C2:37:2B:DC:A1";
@@ -26,6 +29,9 @@ namespace Vehicle {
 
   // OBD dongle; empty = auto-detect by name / known ELM service
   inline constexpr const char *OBD_DONGLE_MAC = "";
+
+  // HCalory 8 kW diesel heater ("Heater5664")
+  inline constexpr const char *HEATER_BLE_MAC = "ec:b1:b6:05:fe:5e";
 
   // ---- TPMS sensor IDs, in gauge order ----
 

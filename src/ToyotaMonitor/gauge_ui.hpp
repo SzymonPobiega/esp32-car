@@ -1,21 +1,9 @@
 #pragma once
 #include <lvgl.h>
-#include <vector>
 
-// Encapsulates one gauge's LVGL widgets/indicators
-struct GaugeUI {
-    lv_obj_t* meter = nullptr;
-    lv_meter_scale_t* scale = nullptr;
-    lv_meter_indicator_t* needle = nullptr;
-    lv_obj_t* label_temp = nullptr;
-    lv_obj_t* label_pressure = nullptr;
-    lv_obj_t* label_age = nullptr;
-};
+// TYRES page: one CRT dial per tyre (1-3 bar) with pressure, temperature and
+// the seconds since the last reading. Gauge order follows Vehicle::TPMS_SENSORS.
+void create_tyres_page(lv_obj_t *page);
 
-GaugeUI create_pressure_gauge(lv_obj_t* parent, int size_px);
-
-extern const lv_font_t* choose_font_by_height(int target_px);
-
-extern std::vector<GaugeUI> gauges;
-
+// Starts the timer that refreshes the dials from tpms:: data
 void init_gauge_timer();

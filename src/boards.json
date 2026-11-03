@@ -19,10 +19,22 @@
       "sketch": "TpmsConnector",
       "fqbn": "esp32:esp32:esp32"
     },
+    "b0:cb:d8:8e:21:b8": {
+      "name": "Toyota BMS connector",
+      "vehicle": "Toyota",
+      "sketch": "BmsConnector",
+      "fqbn": "esp32:esp32:esp32"
+    },
     "a4:f0:0f:69:2d:78": {
       "name": "Toyota OBD connector",
       "vehicle": "Toyota",
       "sketch": "ObdConnector",
+      "fqbn": "esp32:esp32:esp32"
+    },
+    "d4:e9:f4:e6:cc:90": {
+      "name": "Toyota heater connector",
+      "vehicle": "Toyota",
+      "sketch": "HeaterConnector",
       "fqbn": "esp32:esp32:esp32"
     },
     "d4:e9:f4:e6:c4:74": {

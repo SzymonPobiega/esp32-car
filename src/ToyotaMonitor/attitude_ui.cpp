@@ -1,239 +1,190 @@
 #include "attitude_ui.hpp"
-#include <string.h>
+#include "fo_theme.hpp"
+#include <Arduino.h>
 #include <math.h>
 
-static inline float clampf(float v, float lo, float hi)
+// Readouts dim when no gyro packet arrived for this long
+static const uint32_t GYRO_STALE_MS = 10000;
+
+// Images are tilted at most this far
+static const float MAX_TILT_DEG = 45.0f;
+
+// Below this the status line says LEVEL
+static const float LEVEL_DEG = 0.5f;
+
+static const lv_coord_t VIEW_W = 408;
+static const lv_coord_t VIEW_H = 272;
+static const lv_coord_t HORIZON_Y = 238;
+static const lv_coord_t CALLOUT_Y = 118;   // height where the callout lines leave the screen edge
+
+// One leader line from a screen edge to a point on the car, Fallout Tactics style:
+// along the edge-side label, down, then across to the car
+struct Callout {
+    lv_obj_t *line;
+    lv_point_t pts[4];
+    lv_coord_t anchor_x;   // point on the car, image coordinates
+    lv_coord_t anchor_y;
+};
+
+struct TargetView {
+    lv_obj_t *car;
+    lv_obj_t *value;
+    lv_obj_t *status;
+    Callout left;
+    Callout right;
+    lv_coord_t img_x, img_y;     // image position in the view
+    const char *text_level;
+    const char *text_positive;   // status for a positive angle
+    const char *text_negative;
+    float shown;
+};
+
+static TargetView pitch_view;
+static TargetView roll_view;
+static const volatile uint32_t *gyro_last_update = nullptr;
+static bool fresh = false;
+
+static void callout_init(Callout &c, lv_obj_t *parent, bool from_left,
+                         lv_coord_t anchor_x, lv_coord_t anchor_y)
 {
-    if(v < lo) return lo;
-    if(v > hi) return hi;
-    return v;
+    c.anchor_x = anchor_x;
+    c.anchor_y = anchor_y;
+    lv_coord_t edge = from_left ? 0 : VIEW_W;
+    lv_coord_t step = from_left ? 32 : VIEW_W - 32;
+    c.pts[0] = { edge, CALLOUT_Y };
+    c.pts[1] = { step, CALLOUT_Y };
+    c.pts[2] = { step, CALLOUT_Y };
+    c.pts[3] = { step, CALLOUT_Y };
+
+    c.line = lv_line_create(parent);
+    lv_obj_set_style_line_color(c.line, fo::hex(fo::PHOSPHOR), 0);
+    lv_obj_set_style_line_width(c.line, 2, 0);
+    lv_obj_set_pos(c.line, 0, 0);
 }
 
-static inline void make_static(lv_obj_t *o)
+// Re-aims a callout at its anchor after the image has been rotated
+static void callout_aim(TargetView &v, Callout &c, float deg)
 {
-    lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(o, LV_SCROLLBAR_MODE_OFF);
+    const lv_img_dsc_t *img = (const lv_img_dsc_t *)lv_img_get_src(v.car);
+    float px = img->header.w / 2.0f, py = img->header.h / 2.0f;
+    float a = deg * (float)M_PI / 180.0f;
+    float dx = c.anchor_x - px, dy = c.anchor_y - py;
+    // lv_img angles are clockwise on screen (y grows downwards)
+    lv_coord_t x = (lv_coord_t)lroundf(v.img_x + px + dx * cosf(a) - dy * sinf(a));
+    lv_coord_t y = (lv_coord_t)lroundf(v.img_y + py + dx * sinf(a) + dy * cosf(a));
+
+    c.pts[2].y = y;
+    c.pts[3] = { x, y };
+    lv_line_set_points(c.line, c.pts, 4);
 }
 
-static void style_ticks_only(lv_obj_t *m)
+static void create_view(TargetView &v, lv_obj_t *parent, const char *title, const lv_img_dsc_t *img,
+                              const char *left_name, lv_coord_t left_x, lv_coord_t left_y,
+                              const char *right_name, lv_coord_t right_x, lv_coord_t right_y)
 {
-    // Keep object, remove theme styles
-    lv_obj_remove_style_all(m);
-    lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_opa(m, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_pad_all(m, 0, 0);
-    make_static(m);
+    v.shown = NAN;
+
+    lv_obj_t *view = fo::box(parent);   // clips the rotated image
+    lv_obj_set_size(view, VIEW_W, VIEW_H);
+
+    static const lv_coord_t dash_pts_len = 2;
+    static lv_point_t horizon_pts[dash_pts_len] = { { 0, HORIZON_Y }, { VIEW_W, HORIZON_Y } };
+    lv_obj_t *horizon = lv_line_create(view);
+    lv_line_set_points(horizon, horizon_pts, dash_pts_len);
+    lv_obj_set_style_line_color(horizon, fo::hex(fo::PHOSPHOR_DIM), 0);
+    lv_obj_set_style_line_width(horizon, 2, 0);
+    lv_obj_set_style_line_dash_width(horizon, 6, 0);
+    lv_obj_set_style_line_dash_gap(horizon, 6, 0);
+
+    v.img_x = (VIEW_W - img->header.w) / 2;
+    v.img_y = HORIZON_Y - img->header.h;
+    v.car = lv_img_create(view);
+    lv_img_set_src(v.car, img);
+    lv_obj_set_pos(v.car, v.img_x, v.img_y);
+    lv_img_set_pivot(v.car, img->header.w / 2, img->header.h / 2);
+
+    callout_init(v.left, view, true, left_x, left_y);
+    callout_init(v.right, view, false, right_x, right_y);
+
+    lv_obj_t *l = fo::label(view, &fo_vt323_24, fo::PHOSPHOR, left_name);
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 4, CALLOUT_Y - 26);
+    l = fo::label(view, &fo_vt323_24, fo::PHOSPHOR, right_name);
+    lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -4, CALLOUT_Y - 26);
+
+    l = fo::label(view, &fo_vt323_32, fo::PHOSPHOR, title);
+    lv_obj_align(l, LV_ALIGN_TOP_LEFT, 4, 0);
+
+    v.value = fo::label(view, &fo_vt323_60, fo::PHOSPHOR_OFF, "--");
+    lv_obj_align(v.value, LV_ALIGN_TOP_RIGHT, -4, 0);
+
+    v.status = fo::label(view, &fo_vt323_20, fo::PHOSPHOR_DIM, "NO GYRO DATA");
+    lv_obj_align(v.status, LV_ALIGN_BOTTOM_LEFT, 4, -6);
+
+    l = fo::label(view, &fo_vt323_20, fo::PHOSPHOR_DIM, "HORIZON");
+    lv_obj_align(l, LV_ALIGN_BOTTOM_RIGHT, -4, -6);
+
+    callout_aim(v, v.left, 0);
+    callout_aim(v, v.right, 0);
 }
 
-// Build one side meter (square) with inward-facing semicircle ticks
-static void build_side_meter(lv_obj_t *parent,
-                            lv_obj_t **out_meter,
-                            lv_meter_scale_t **out_scale,
-                            lv_meter_indicator_t **out_needle,
-                            lv_meter_indicator_t **out_hl,
-                            int size_sq,
-                            bool right_side,
-                            int max_deg)
+static void view_set(TargetView &v, float deg)
 {
-    lv_obj_t *m = lv_meter_create(parent);
-    style_ticks_only(m);
-    lv_obj_set_size(m, size_sq, size_sq);
+    float d = deg > MAX_TILT_DEG ? MAX_TILT_DEG : deg < -MAX_TILT_DEG ? -MAX_TILT_DEG : deg;
+    if (d == v.shown) return;
+    v.shown = d;
 
-    lv_meter_scale_t *sc = lv_meter_add_scale(m);
+    lv_img_set_angle(v.car, (int16_t)lroundf(d * 10.0f));
+    callout_aim(v, v.left, d);
+    callout_aim(v, v.right, d);
 
-    // 90° arc: +/-45° around the side direction
-    // Left centered at 180° -> 135..225
-    // Right centered at   0° -> 315..45
-    if(right_side) {
-        lv_meter_set_scale_range(m, sc, max_deg, -max_deg, 90, 315);
-    } else {
-        lv_meter_set_scale_range(m, sc, -max_deg, max_deg, 90, 135);
-    }
-
-    // Dense ticks like your reference image
-    lv_meter_set_scale_ticks(m, sc, 19, 2, 10, lv_color_black());      
-    lv_meter_set_scale_major_ticks(m, sc, 3, 3, 18, lv_color_black(), 10);
-
-    // Needle (yellow)
-    lv_meter_indicator_t *needle =
-        lv_meter_add_needle_line(m, sc, 4, lv_palette_main(LV_PALETTE_YELLOW), -18);
-
-    // Yellow highlight arc: we will set start/end dynamically in attitude_set_value()
-    lv_meter_indicator_t *hl =
-        lv_meter_add_arc(m, sc, 10, lv_palette_main(LV_PALETTE_YELLOW), 0);
-
-    // Start with no highlight
-    lv_meter_set_indicator_start_value(m, hl, 0);
-    lv_meter_set_indicator_end_value(m, hl, 0);
-
-    *out_meter = m;
-    *out_scale = sc;
-    *out_needle = needle;
-    *out_hl = hl;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%+ld°", lroundf(deg));
+    lv_label_set_text(v.value, buf);
+    lv_label_set_text(v.status, fabsf(deg) < LEVEL_DEG ? v.text_level
+                                : deg > 0 ? v.text_positive : v.text_negative);
 }
 
-AttitudeUI create_attitude_indicator(lv_obj_t *parent, int size_px)
+static void set_fresh(bool f)
 {
-    AttitudeUI ui;
-    memset(&ui, 0, sizeof(ui));
-
-    ui.max_deg = 45;
-
-    // Overall footprint: same as “two gauges side-by-side”
-    const lv_coord_t W = (lv_coord_t)(size_px * 2);
-    const lv_coord_t H = (lv_coord_t)(size_px);
-
-    // Titles removed — reclaim vertical space
-    const lv_coord_t title_h = 0;
-    ui.title = nullptr;
-
-    // Meters must fit inside remaining height
-    const lv_coord_t meter_sz = H - title_h;  // <-- fixes bottom trimming
-    const lv_coord_t y0 = title_h;
-
-    // Root
-    ui.root = lv_obj_create(parent);
-    lv_obj_remove_style_all(ui.root);
-    lv_obj_clear_flag(ui.root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(ui.root, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_size(ui.root, W, H);
-    lv_obj_center(ui.root);
-
-    // Build left/right meters (SQUARE so arcs are big)
-    build_side_meter(ui.root, &ui.meter_l, &ui.scale_l, &ui.needle_l, &ui.hl_l,
-                     meter_sz, false, ui.max_deg);
-
-    build_side_meter(ui.root, &ui.meter_r, &ui.scale_r, &ui.needle_r, &ui.hl_r,
-                     meter_sz, true, ui.max_deg);
-
-    // target_inner_gap:
-    //   0  -> meters touch at the inner edge
-    //  <0  -> meters overlap by -gap pixels (recommended: -10..-30)
-    const lv_coord_t target_inner_gap = -250;  // overlap by 20 px
-
-    lv_coord_t base_inner_gap = W - 2 * meter_sz;
-    lv_coord_t overlap = base_inner_gap - target_inner_gap;   // becomes larger if target is negative
-    if(overlap < 0) overlap = 0;
-
-    lv_coord_t shift = overlap / 2;
-    lv_obj_set_pos(ui.meter_l, shift, y0);
-    lv_obj_set_pos(ui.meter_r, W - meter_sz - shift, y0);
-
-    // Center image goes directly on ROOT, above meters (no clipping container)
-    ui.car = nullptr; // set later via attitude_set_center_image()
-
-    // Degree label at bottom center
-    // ui.deg_label = lv_label_create(ui.root);
-    // lv_label_set_text(ui.deg_label, "--°");
-    // lv_obj_set_style_text_color(ui.deg_label, lv_color_black(), 0);
-    // lv_obj_align(ui.deg_label, LV_ALIGN_BOTTOM_MID, 0, -6);
-
-    // Initialize
-    attitude_set_value(&ui, 0.0f);
-
-    return ui;
+    fresh = f;
+    uint32_t color = f ? fo::PHOSPHOR : fo::PHOSPHOR_OFF;
+    lv_obj_set_style_text_color(pitch_view.value, fo::hex(color), 0);
+    lv_obj_set_style_text_color(roll_view.value, fo::hex(color), 0);
 }
 
-
-void attitude_set_center_image(AttitudeUI *ui, const lv_img_dsc_t *img)
+static void stale_timer_cb(lv_timer_t *t)
 {
-    if(!ui || !ui->root || !img) return;
-
-    if(ui->car) {
-        lv_obj_del(ui->car);
-        ui->car = nullptr;
-    }
-
-    ui->car = lv_img_create(ui->root);
-    lv_img_set_src(ui->car, img);
-
-    lv_obj_clear_flag(ui->car, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scrollbar_mode(ui->car, LV_SCROLLBAR_MODE_OFF);
-
-    lv_img_set_pivot(ui->car,
-                 img->header.w / 2,
-                 img->header.h / 2);
-
-    // Place it
-    lv_obj_align(ui->car, LV_ALIGN_CENTER, 0, 0);
-
-    // Make sure it draws above the meters
-    lv_obj_move_foreground(ui->car);
+    if (fresh && millis() - *gyro_last_update > GYRO_STALE_MS) set_fresh(false);
 }
 
-void attitude_set_image_tilt(AttitudeUI *ui, float deg)
+void create_level_page(lv_obj_t *page, const volatile uint32_t *last_update)
 {
-    if(!ui || !ui->car) return;
+    gyro_last_update = last_update;
 
-    // 0.1 degree units
-    int16_t a10 = (int16_t)lroundf(deg * 10.0f);
-    lv_img_set_angle(ui->car, a10);
+    lv_obj_set_flex_flow(page, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(page, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    // Keep it on top
-    lv_obj_move_foreground(ui->car);
+    // Anchors are in image pixels: front bumper and spare wheel on the side view
+    // (car faces left), the outer tyre walls on the front view
+    create_view(pitch_view, page, "PITCH", &fo_car_side,
+                "NOSE", 6, 78, "TAIL", 290, 60);
+    pitch_view.text_level = "LEVEL";
+    pitch_view.text_positive = "NOSE UP";
+    pitch_view.text_negative = "NOSE DOWN";
+
+    // Seen from the front, the car's left side is on the right of the screen
+    create_view(roll_view, page, "ROLL", &fo_car_front,
+                "RIGHT", 10, 150, "LEFT", 195, 150);
+    roll_view.text_level = "LEVEL";
+    roll_view.text_positive = "LEFT SIDE LOW";
+    roll_view.text_negative = "RIGHT SIDE LOW";
+
+    lv_timer_create(stale_timer_cb, 1000, nullptr);
 }
 
-
-
-void attitude_set_car_image(AttitudeUI *ui, const void *src, uint16_t zoom_256)
+void attitude_update(float pitch_deg, float roll_deg)
 {
-    if(!ui || !ui->center) return;
-
-    // Delete placeholder if it was a label
-    if(ui->car) lv_obj_del(ui->car);
-
-    ui->car = lv_img_create(ui->center);
-    lv_img_set_src(ui->car, src);
-    lv_img_set_zoom(ui->car, zoom_256); // 256=100%, 128=50%, etc.
-    lv_obj_align(ui->car, LV_ALIGN_CENTER, 0, -10);
-}
-
-void attitude_set_value(AttitudeUI *ui, float deg)
-{
-    if(!ui) return;
-
-    float d = clampf(deg, -(float)ui->max_deg, (float)ui->max_deg);
-
-    // Needles follow the actual degree
-    if(ui->meter_l && ui->needle_l) lv_meter_set_indicator_value(ui->meter_l, ui->needle_l, (int32_t)d);
-    if(ui->meter_r && ui->needle_r) lv_meter_set_indicator_value(ui->meter_r, ui->needle_r, (int32_t)-d);
-
-    // Highlight: negative -> left side, positive -> right side
-    int32_t a = (int32_t)lroundf(fabsf(d));
-
-    // Reset both
-    if(ui->meter_l && ui->hl_l) {
-        lv_meter_set_indicator_start_value(ui->meter_l, ui->hl_l, 0);
-        lv_meter_set_indicator_end_value(ui->meter_l, ui->hl_l, 0);
-    }
-    if(ui->meter_r && ui->hl_r) {
-        lv_meter_set_indicator_start_value(ui->meter_r, ui->hl_r, 0);
-        lv_meter_set_indicator_end_value(ui->meter_r, ui->hl_r, 0);
-    }
-
-    if(d < 0) {
-        // left highlight: from -a to 0 (or 0 to -a)
-        lv_meter_set_indicator_start_value(ui->meter_l, ui->hl_l, -a);
-        lv_meter_set_indicator_end_value(ui->meter_l, ui->hl_l, 0);
-
-        lv_meter_set_indicator_start_value(ui->meter_r, ui->hl_r, a);
-        lv_meter_set_indicator_end_value(ui->meter_r, ui->hl_r, 0);
-
-    } else if(d > 0) {
-        // right highlight: from 0 to +a
-        lv_meter_set_indicator_start_value(ui->meter_l, ui->hl_l, 0);
-        lv_meter_set_indicator_end_value(ui->meter_l, ui->hl_l, a);
-
-        lv_meter_set_indicator_start_value(ui->meter_r, ui->hl_r, 0);
-        lv_meter_set_indicator_end_value(ui->meter_r, ui->hl_r, -a);
-    }
-
-    // Degree label
-    if(ui->deg_label) {
-        char buf[16];
-        lv_snprintf(buf, sizeof(buf), "%d°", (int)lroundf(d));
-        lv_label_set_text(ui->deg_label, buf);
-    }
-
-    attitude_set_image_tilt(ui, d);
+    if (!fresh) set_fresh(true);
+    view_set(pitch_view, pitch_deg);
+    view_set(roll_view, roll_deg);
 }

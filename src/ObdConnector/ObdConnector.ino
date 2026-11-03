@@ -6,6 +6,8 @@
 //   21D9 @ 7E1  ATF pan temperature (E - 40) and converter outlet (G - 40)
 //   010B @ 7DF  manifold absolute pressure, scaled by 014F byte D if supported
 //   0133 @ 7DF  barometric pressure
+// Fault codes (DtcPacket), when the vehicle starts answering and then every minute:
+//   0101, 03, 07 @ 7E0 (engine) and 03, 07 @ 7E1 (gearbox); 1800FF00 or 13 @ 7B0 (ABS/VSC)
 //
 // Target board: standard ESP32.
 
@@ -34,6 +36,8 @@ static const uint32_t BARO_POLL_MS = 30000;
 static const uint32_t SEND_INTERVAL_MS = 250;  // max ESP-NOW update rate while polling
 static const uint32_t STATUS_INTERVAL_MS = 1000;  // ping rate while not polling
 static const uint8_t  MAX_FAILURES = 3;        // consecutive failures before a value is cleared
+static const uint32_t DTC_SCAN_MS = 60000;     // fault code rescan interval
+static const uint32_t DTC_SEND_MS = 5000;      // repeat rate of the last fault code report
 // -----------------------------------------------------
 
 // Serial services used by common ELM327 BLE dongles
@@ -65,6 +69,11 @@ static Poll pollGear = {};
 static Poll pollAtf = {};
 static Poll pollMap = {};
 static Poll pollBaro = {};
+
+static DtcPacket dtc;
+static bool dtcValid = false;       // dtc holds a scan from the current ignition cycle
+static uint32_t lastDtcScanMs = 0;
+static uint32_t lastDtcSendMs = 0;
 
 // ---------- ESP-NOW ----------
 void onEspNowSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
@@ -252,8 +261,9 @@ static int hexValue(char c) {
 
 // Extracts the data bytes that follow the positive response (e.g. 61 D9) in an ELM reply.
 // Handles single frames and CAN auto-formatted multi-frame replies ("0: ..", "1: ..")
-// with headers off. Returns the number of data bytes, or -1 if there is no positive response.
-static int parseResponse(const String &reply, uint8_t service, uint8_t pid, uint8_t *out, int maxLen) {
+// with headers off. pid < 0 matches the service byte alone (e.g. 43 for mode 03).
+// Returns the number of data bytes, or -1 if there is no positive response.
+static int parseResponse(const String &reply, uint8_t service, int pid, uint8_t *out, int maxLen) {
   uint8_t bytes[128];
   int count = 0;
 
@@ -296,36 +306,57 @@ static int parseResponse(const String &reply, uint8_t service, uint8_t pid, uint
     }
   }
 
-  for (int i = 0; i + 1 < count; i++) {
-    if (bytes[i] == service && bytes[i + 1] == pid) {
+  int skip = pid < 0 ? 1 : 2;
+  for (int i = 0; i + skip <= count; i++) {
+    if (bytes[i] == service && (pid < 0 || (i + 1 < count && bytes[i + 1] == pid))) {
       int n = 0;
-      for (int j = i + 2; j < count && n < maxLen; j++) out[n++] = bytes[j];
+      for (int j = i + skip; j < count && n < maxLen; j++) out[n++] = bytes[j];
       return n;
     }
   }
   return -1;
 }
 
-// Sends a request and returns its data bytes, or -1 on failure
-static int request(int16_t header, const char *cmd, uint8_t *out, int maxLen, uint32_t timeoutMs = 1000) {
+// Addresses requests to an ECU. The ELM filters replies to 7E8-7EF by itself;
+// other modules (e.g. ABS 7B0 -> 7B8) need an explicit receive address.
+static bool setHeader(int16_t header) {
+  if (header == currentHeader) return true;
   String reply;
-  if (header != currentHeader) {
-    const char *setHeader = header == 0x7E1 ? "ATSH7E1" : "ATSH7DF";
-    if (!elmCommand(setHeader, reply)) return -1;
-    currentHeader = header;
+  char cmd[12];
+  snprintf(cmd, sizeof(cmd), "ATSH%03X", header);
+  if (!elmCommand(cmd, reply)) return false;
+  if (header == 0x7DF || (header & 0xFF8) == 0x7E0) {
+    snprintf(cmd, sizeof(cmd), "ATAR");
+  } else {
+    snprintf(cmd, sizeof(cmd), "ATCRA%03X", header + 8);
   }
+  if (!elmCommand(cmd, reply)) return false;
+  currentHeader = header;
+  return true;
+}
 
+// Sends cmd and returns the data bytes after the response service byte (and the
+// echoed pid when pid >= 0), or -1 on failure
+static int requestRaw(int16_t header, const char *cmd, uint8_t service, int pid,
+                      uint8_t *out, int maxLen, uint32_t timeoutMs = 1000) {
+  String reply;
+  if (!setHeader(header)) return -1;
   if (!elmCommand(cmd, reply, timeoutMs)) return -1;
 
-  uint8_t service = (uint8_t)(hexValue(cmd[0]) << 4 | hexValue(cmd[1])) + 0x40;
-  uint8_t pid = (uint8_t)(hexValue(cmd[2]) << 4 | hexValue(cmd[3]));
   int n = parseResponse(reply, service, pid, out, maxLen);
   if (n < 0) {
     String compact = reply;
     compact.replace("\r", " | ");
-    Serial.printf("%s -> %s\n", cmd, compact.c_str());
+    Serial.printf("%03X %s -> %s\n", header, cmd, compact.c_str());
   }
   return n;
+}
+
+// Sends a service + pid request (e.g. 21D9) and returns its data bytes, or -1 on failure
+static int request(int16_t header, const char *cmd, uint8_t *out, int maxLen, uint32_t timeoutMs = 1000) {
+  uint8_t service = (uint8_t)(hexValue(cmd[0]) << 4 | hexValue(cmd[1])) + 0x40;
+  uint8_t pid = (uint8_t)(hexValue(cmd[2]) << 4 | hexValue(cmd[3]));
+  return requestRaw(header, cmd, service, pid, out, maxLen, timeoutMs);
 }
 
 static bool initElm() {
@@ -434,6 +465,89 @@ static void resetPolls() {
   clearValues();
 }
 
+// ---------- Fault codes ----------
+static void dtcAdd(uint16_t code, uint8_t source) {
+  for (int i = 0; i < DTC_MAX_CODES; i++) {
+    if (dtc.source[i] == DTC_UNUSED) {
+      dtc.codes[i] = code;
+      dtc.source[i] = source;
+      return;
+    }
+  }
+}
+
+// OBD-II mode 03 (stored) or 07 (pending) on CAN: a count byte, then 2 bytes per code
+static int16_t readObdCodes(int16_t header, const char *cmd, uint8_t source) {
+  uint8_t d[64];
+  uint8_t service = strcmp(cmd, "03") == 0 ? 0x43 : 0x47;
+  int n = requestRaw(header, cmd, service, -1, d, sizeof(d), 2000);
+  if (n < 1) return DTC_NO_ANSWER;
+  int count = d[0];
+  for (int i = 0; i < count && 2 + 2 * i < n; i++) {
+    dtcAdd((uint16_t)(d[1 + 2 * i] << 8 | d[2 + 2 * i]), source);
+  }
+  return count;
+}
+
+// Toyota ABS/VSC ECU (KWP2000 on CAN). Untested on the VDJ200: tries readDTCByStatus,
+// then readDiagnosticTroubleCodes, and logs what answers.
+static int16_t readAbsCodes() {
+  uint8_t d[64];
+  int n = requestRaw(0x7B0, "1800FF00", 0x58, -1, d, sizeof(d), 2000);
+  if (n >= 1) {
+    // count, then code high, code low, status. The status should tell current codes
+    // from history; logged until its bits are known for this ECU.
+    for (int i = 0; i < d[0] && 3 + 3 * i <= n; i++) {
+      dtcAdd((uint16_t)(d[1 + 3 * i] << 8 | d[2 + 3 * i]), DTC_ABS);
+      Serial.printf("  ABS code %02X%02X status %02X\n", d[1 + 3 * i], d[2 + 3 * i], d[3 + 3 * i]);
+    }
+    Serial.printf("ABS 18 -> %d bytes, %d codes\n", n, d[0]);
+    return d[0];
+  }
+  n = requestRaw(0x7B0, "13", 0x53, -1, d, sizeof(d), 2000);
+  if (n >= 1) {
+    // count, then 2 bytes per code
+    for (int i = 0; i < d[0] && 2 + 2 * i < n; i++) {
+      dtcAdd((uint16_t)(d[1 + 2 * i] << 8 | d[2 + 2 * i]), DTC_ABS);
+    }
+    Serial.printf("ABS 13 -> %d bytes, %d codes\n", n, d[0]);
+    return d[0];
+  }
+  return DTC_NO_ANSWER;
+}
+
+static void scanDtc() {
+  uint16_t scans = dtc.scan;
+  dtc = {};
+  dtc.type = TYPE_DTC;
+  dtc.scan = scans + 1;
+  memset(dtc.source, DTC_UNUSED, sizeof(dtc.source));
+
+  uint8_t d[8];
+  int n = request(0x7E0, "0101", d, sizeof(d));
+  dtc.mil = n >= 1 ? (d[0] >> 7) : OBD_NO_VALUE;
+
+  dtc.stored[DTC_ENGINE] = readObdCodes(0x7E0, "03", DTC_ENGINE);
+  dtc.pending[DTC_ENGINE] = readObdCodes(0x7E0, "07", DTC_ENGINE | DTC_PENDING);
+  dtc.stored[DTC_GEARBOX] = readObdCodes(0x7E1, "03", DTC_GEARBOX);
+  dtc.pending[DTC_GEARBOX] = readObdCodes(0x7E1, "07", DTC_GEARBOX | DTC_PENDING);
+  dtc.stored[DTC_ABS] = readAbsCodes();
+  dtc.pending[DTC_ABS] = DTC_NO_ANSWER;
+
+  Serial.printf("DTC scan %u: mil=%d engine=%d/%d gearbox=%d/%d abs=%d\n", dtc.scan, dtc.mil,
+                dtc.stored[DTC_ENGINE], dtc.pending[DTC_ENGINE],
+                dtc.stored[DTC_GEARBOX], dtc.pending[DTC_GEARBOX], dtc.stored[DTC_ABS]);
+  for (int i = 0; i < DTC_MAX_CODES && dtc.source[i] != DTC_UNUSED; i++) {
+    Serial.printf("  code %04X module %d%s\n", dtc.codes[i], dtc.source[i] & 0x7F,
+                  dtc.source[i] & DTC_PENDING ? " pending" : "");
+  }
+}
+
+static void sendDtc() {
+  esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t *)&dtc, sizeof(dtc));
+  lastDtcSendMs = millis();
+}
+
 // ---------- Arduino ----------
 void setup() {
   Serial.begin(115200);
@@ -473,6 +587,7 @@ void loop() {
   case State::Scanning:
     packet.status = OBD_STATUS_NO_DONGLE;
     resetPolls();
+    dtcValid = false;
     sendPacket();
     if (findAndConnect()) state = State::Initializing;
     break;
@@ -500,8 +615,19 @@ void loop() {
     }
     // Vehicle not answering (ignition off): poll slowly but keep pinging the monitor
     if (packet.status != OBD_STATUS_OK) {
+      dtcValid = false;   // rescan on the next ignition
       delay(STATUS_INTERVAL_MS);
       sendPacket();
+      break;
+    }
+    // Fault codes: scan when the vehicle starts answering, then every minute
+    if (!dtcValid || now - lastDtcScanMs >= DTC_SCAN_MS) {
+      scanDtc();
+      dtcValid = true;
+      lastDtcScanMs = millis();
+      sendDtc();
+    } else if (millis() - lastDtcSendMs >= DTC_SEND_MS) {
+      sendDtc();
     }
     break;
   }

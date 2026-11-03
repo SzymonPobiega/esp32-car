@@ -25,9 +25,11 @@ uint32_t getIndex(uint32_t sensor)
 bool handleTpms(const TpmsPacket& pkt) {
     uint32_t now = millis();
 
-    // Connector ping before any sensor has been received: link is alive, nothing to show
+    // Any packet means the connector is alive, even a ping repeating another car's sensor
+    last_update = now;
+
+    // Connector ping before any sensor has been received: nothing to show
     if (pkt.sensorId == kNoSensor) {
-        last_update = now;
         return true;
     }
 
@@ -42,10 +44,8 @@ bool handleTpms(const TpmsPacket& pkt) {
         latestTemp[idx]     = pkt.temp;
         lastUpdated[idx] = now;
         hasData = true;
-        Serial.print("Dupa!");
     }
-    
-    last_update = now;
+
     return true;
 }
 

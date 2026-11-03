@@ -1,8 +1,8 @@
 // ESP-NOW modem for the P4 dashboard, running on the ESP32-C6 that sits next to the P4.
 //
 // Receives ESP-NOW packets and forwards them to the P4 over UART0, framed as described
-// in Shared/ModemProtocol.hpp. Sends a heartbeat every second so the P4 can tell the
-// modem is alive and learn its MAC address.
+// in Shared/ModemProtocol.hpp, and sends what the P4 asks it to (KIND_ESPNOW_TX). Sends a
+// heartbeat every second so the P4 can tell the modem is alive and learn its MAC address.
 //
 // UART0 is the link to the P4, so nothing else may print to it. Debug output goes to the
 // USB Serial/JTAG port, and only when "USB CDC On Boot" is enabled.
@@ -42,6 +42,10 @@ static QueueHandle_t rxQueue = nullptr;
 static std::atomic<uint32_t> rxCount{0};
 static std::atomic<uint32_t> rxDropped{0};
 static std::atomic<uint32_t> rxOversize{0};
+static uint32_t txCount = 0;
+static uint32_t txFailed = 0;
+
+static Modem::FrameParser hostParser;   // frames from the P4
 
 static uint8_t staMac[6];
 static uint8_t frameBuf[Modem::MAX_FRAME];
@@ -106,6 +110,36 @@ void forwardRxItem(const RxItem &item) {
   sendFrame(Modem::KIND_ESPNOW_RX, payload, (uint16_t)(sizeof(item.header) + item.len));
 }
 
+// ---------- Host commands ----------
+// Sends ESP-NOW data for the P4, adding the destination as a peer the first time
+void sendForHost(const uint8_t *payload, uint16_t len) {
+  if (len < sizeof(Modem::EspNowTxHeader) || len - sizeof(Modem::EspNowTxHeader) > Modem::MAX_ESPNOW_DATA) {
+    txFailed++;
+    return;
+  }
+  const uint8_t *dst = payload;
+  if (!esp_now_is_peer_exist(dst)) {
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, dst, 6);
+    peer.channel = 0;   // current channel
+    peer.encrypt = false;
+    if (esp_now_add_peer(&peer) != ESP_OK) {
+      txFailed++;
+      return;
+    }
+  }
+  size_t n = len - sizeof(Modem::EspNowTxHeader);
+  if (esp_now_send(dst, payload + sizeof(Modem::EspNowTxHeader), n) == ESP_OK) txCount++;
+  else txFailed++;
+}
+
+void pollHost() {
+  while (Link.available()) {
+    if (hostParser.feed((uint8_t)Link.read()) != Modem::FrameParser::FRAME) continue;
+    if (hostParser.kind == Modem::KIND_ESPNOW_TX) sendForHost(hostParser.payload, hostParser.len);
+  }
+}
+
 void sendHeartbeat() {
   Modem::Heartbeat hb;
   memcpy(hb.mac, staMac, 6);
@@ -156,11 +190,14 @@ void loop() {
     } while (xQueueReceive(rxQueue, &item, 0) == pdTRUE);
   }
 
+  pollHost();
+
   uint32_t now = millis();
   if (now - lastHeartbeatMs >= Modem::HEARTBEAT_INTERVAL_MS) {
     lastHeartbeatMs = now;
     sendHeartbeat();
-    DBG("rx=%lu dropped=%lu oversize=%lu\n",
-        (unsigned long)rxCount.load(), (unsigned long)rxDropped.load(), (unsigned long)rxOversize.load());
+    DBG("rx=%lu dropped=%lu oversize=%lu tx=%lu txFailed=%lu\n",
+        (unsigned long)rxCount.load(), (unsigned long)rxDropped.load(), (unsigned long)rxOversize.load(),
+        (unsigned long)txCount, (unsigned long)txFailed);
   }
 }

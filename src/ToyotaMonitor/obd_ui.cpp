@@ -1,4 +1,5 @@
 #include "obd_ui.hpp"
+#include "fo_theme.hpp"
 #include <Arduino.h>
 
 using namespace Contracts;
@@ -9,153 +10,172 @@ volatile uint32_t obd_last_update = 0;
 // (BLE scanning and connecting can pause it for several seconds)
 static const uint32_t OBD_STALE_MS = 10000;
 
-// ATF temperature colouring
+// ATF temperatures: inverted from WARN, inverted and blinking from CRIT
 static const int ATF_WARN_C = 105;
 static const int ATF_CRIT_C = 115;
+// ATF bar: 18 segments of 5 °C from 40 °C
+static const int ATF_BAR_MIN = 40;
+static const int ATF_BAR_STEP = 5;
+static const int ATF_SEGS = 18;
 
-// Boost bar range, centi-bar
+// Boost bar: 20 segments of 0.1 bar, centi-bar
 static const int BOOST_BAR_MAX = 200;
+static const int BOOST_SEGS = 20;
 
-static const lv_color_t COLOR_TILE    = lv_color_make(0x20, 0x20, 0x20);
-static const lv_color_t COLOR_CAPTION = lv_color_make(170, 170, 170);
-static const lv_color_t COLOR_VALUE   = lv_color_white();
-static const lv_color_t COLOR_NONE    = lv_color_make(110, 110, 110);
-static const lv_color_t COLOR_OK      = lv_color_make(80, 220, 100);
-static const lv_color_t COLOR_WARN    = lv_color_make(255, 165, 0);
-static const lv_color_t COLOR_CRIT    = lv_color_make(230, 40, 40);
+// Vertical nudge for the gear digit in its frame (the 120 px font holds digits only,
+// so its line box is the digit itself)
+static const lv_coord_t GEAR_NUDGE_Y = 0;
+
+static const lv_coord_t ROW_W = fo::CRT_W - 16 - 2 * 14;   // page width minus padding
 
 struct ObdUI {
     lv_obj_t *gear;
+    lv_obj_t *lockup_box;
     lv_obj_t *lockup;
-    lv_obj_t *atf_pan;
-    lv_obj_t *atf_outlet;
-    lv_obj_t *boost;
-    lv_obj_t *boost_bar;
     lv_obj_t *map;
+    fo::ReadingRow atf_pan;
+    fo::ReadingRow atf_outlet;
+    fo::ReadingRow boost;
     lv_obj_t *status;
+    lv_obj_t *cursor;
 };
 
 static ObdUI ui;
 static bool stale = true;
 
-static lv_obj_t *create_tile(lv_obj_t *parent, const char *caption, int col, int col_span, int row)
-{
-    lv_obj_t *tile = lv_obj_create(parent);
-    lv_obj_remove_style_all(tile);
-    lv_obj_set_style_bg_color(tile, COLOR_TILE, 0);
-    lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(tile, 12, 0);
-    lv_obj_set_style_pad_all(tile, 10, 0);
-    lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_grid_cell(tile, LV_GRID_ALIGN_STRETCH, col, col_span, LV_GRID_ALIGN_STRETCH, row, 1);
-
-    lv_obj_t *label = lv_label_create(tile);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(label, COLOR_CAPTION, 0);
-    lv_label_set_text(label, caption);
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
-
-    return tile;
-}
-
-static lv_obj_t *create_value(lv_obj_t *tile, const lv_font_t *font)
-{
-    lv_obj_t *label = lv_label_create(tile);
-    lv_obj_set_style_text_font(label, font, 0);
-    lv_obj_set_style_text_color(label, COLOR_NONE, 0);
-    lv_label_set_text(label, "--");
-    lv_obj_align(label, LV_ALIGN_CENTER, 0, 8);
-    return label;
-}
-
-static void set_value(lv_obj_t *label, const char *text, lv_color_t color)
-{
-    lv_label_set_text(label, text);
-    lv_obj_set_style_text_color(label, color, 0);
-}
-
-static void set_temperature(lv_obj_t *label, int16_t value)
+static void set_temperature(fo::ReadingRow &r, int16_t value)
 {
     if (value == OBD_NO_VALUE) {
-        set_value(label, "-- °C", COLOR_NONE);
+        fo::reading_row_set(r, "--", false, false);
+        fo::seg_bar_set(r.bar, 0, fo::PHOSPHOR);
         return;
     }
     char buf[16];
-    snprintf(buf, sizeof(buf), "%d °C", value);
-    lv_color_t color = value >= ATF_CRIT_C ? COLOR_CRIT : value >= ATF_WARN_C ? COLOR_WARN : COLOR_VALUE;
-    set_value(label, buf, color);
+    snprintf(buf, sizeof(buf), value >= ATF_WARN_C ? "%d°C HOT" : "%d°C", value);
+    fo::reading_row_set(r, buf, value >= ATF_WARN_C, value >= ATF_CRIT_C);
+    fo::seg_bar_set(r.bar, (value - ATF_BAR_MIN + ATF_BAR_STEP - 1) / ATF_BAR_STEP, fo::PHOSPHOR);
+}
+
+static void set_lockup(int16_t lockup)
+{
+    const char *text = lockup == OBD_NO_VALUE ? "--" : lockup ? "LOCKED" : "OPEN";
+    lv_label_set_text(ui.lockup, text);
+    bool locked = lockup != OBD_NO_VALUE && lockup;
+    lv_obj_set_style_bg_opa(ui.lockup_box, locked ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_set_style_text_color(ui.lockup, fo::hex(locked ? fo::CRT_BG : fo::PHOSPHOR), 0);
+}
+
+static void set_status(const char *text)
+{
+    if (strcmp(lv_label_get_text(ui.status), text) != 0) lv_label_set_text(ui.status, text);
 }
 
 static void clear_values()
 {
-    set_value(ui.gear, "--", COLOR_NONE);
-    set_value(ui.lockup, "--", COLOR_NONE);
+    lv_label_set_text(ui.gear, "-");
+    set_lockup(OBD_NO_VALUE);
     set_temperature(ui.atf_pan, OBD_NO_VALUE);
     set_temperature(ui.atf_outlet, OBD_NO_VALUE);
-    set_value(ui.boost, "-- bar", COLOR_NONE);
-    lv_bar_set_value(ui.boost_bar, 0, LV_ANIM_OFF);
-    set_value(ui.map, "MAP -- kPa", COLOR_CAPTION);
+    fo::reading_row_set(ui.boost, "--", false, false);
+    fo::seg_bar_set(ui.boost.bar, 0, fo::PHOSPHOR);
+    lv_label_set_text(ui.map, "MAP -- kPa");
 }
 
-static void obd_stale_timer_cb(lv_timer_t *t)
+static void obd_timer_cb(lv_timer_t *t)
 {
+    // Blinking cursor and critical values
+    static bool phase = false;
+    phase = !phase;
+    if (phase) lv_obj_add_flag(ui.cursor, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(ui.cursor, LV_OBJ_FLAG_HIDDEN);
+
+    fo::ReadingRow *rows[] = { &ui.atf_pan, &ui.atf_outlet };
+    for (fo::ReadingRow *r : rows) {
+        fo::reading_row_blink(*r, phase);
+    }
+
     if (obd_last_update == 0) {
-        lv_label_set_text(ui.status, "Waiting for OBD connector");
+        set_status("> WAITING FOR OBD CONNECTOR");
         return;
     }
     if (!stale && millis() - obd_last_update > OBD_STALE_MS) {
         stale = true;
         clear_values();
-        lv_label_set_text(ui.status, "No data from OBD connector");
+        set_status("> NO DATA FROM OBD CONNECTOR");
     }
 }
 
 void create_obd_tab(lv_obj_t *parent)
 {
-    lv_obj_t *cont = lv_obj_create(parent);
-    lv_obj_remove_style_all(cont);
-    lv_obj_set_size(cont, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_pad_all(cont, 10, 0);
-    lv_obj_set_style_pad_row(cont, 10, 0);
-    lv_obj_set_style_pad_column(cont, 10, 0);
-    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(parent, 12, 0);
 
-    static lv_coord_t col_dsc[] = { LV_GRID_FR(1), LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST };
-    static lv_coord_t row_dsc[] = {
-        LV_GRID_FR(4),        // gear, lockup
-        LV_GRID_FR(3),        // ATF temperatures
-        LV_GRID_FR(3),        // boost
-        LV_GRID_CONTENT,      // status line
-        LV_GRID_TEMPLATE_LAST
-    };
-    lv_obj_set_grid_dsc_array(cont, col_dsc, row_dsc);
+    fo::label(parent, &fo_vt323_24, fo::PHOSPHOR_DIM, "> DRIVETRAIN STATUS");
 
-    ui.gear       = create_value(create_tile(cont, "CURRENT GEAR", 0, 1, 0), &lv_font_montserrat_48);
-    ui.lockup     = create_value(create_tile(cont, "CONVERTER", 1, 1, 0), &lv_font_montserrat_36);
-    ui.atf_pan    = create_value(create_tile(cont, "ATF PAN", 0, 1, 1), &lv_font_montserrat_36);
-    ui.atf_outlet = create_value(create_tile(cont, "ATF OUTLET", 1, 1, 1), &lv_font_montserrat_36);
+    // Gear in a double frame, converter state and MAP beside it
+    lv_obj_t *top = fo::box(parent);
+    lv_obj_set_size(top, ROW_W, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(top, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(top, 16, 0);
 
-    lv_obj_t *boost_tile = create_tile(cont, "BOOST", 0, 2, 2);
-    ui.boost = create_value(boost_tile, &lv_font_montserrat_36);
-    lv_obj_align(ui.boost, LV_ALIGN_CENTER, 0, -6);
+    lv_obj_t *gear_box = fo::box(top);
+    lv_obj_set_size(gear_box, 150, 150);
+    lv_obj_set_style_border_color(gear_box, fo::hex(fo::PHOSPHOR), 0);
+    lv_obj_set_style_border_width(gear_box, 2, 0);
+    lv_obj_t *inner = fo::box(gear_box);
+    lv_obj_set_size(inner, 150 - 12, 150 - 12);
+    lv_obj_center(inner);
+    lv_obj_set_style_border_color(inner, fo::hex(fo::PHOSPHOR), 0);
+    lv_obj_set_style_border_width(inner, 2, 0);
+    // Raw gear code from 21DA, not yet verified against the VDJ200 gearbox
+    ui.gear = fo::label(gear_box, &fo_vt323_120, fo::PHOSPHOR, "-");
+    lv_obj_align(ui.gear, LV_ALIGN_CENTER, 0, GEAR_NUDGE_Y);
 
-    ui.map = lv_label_create(boost_tile);
-    lv_obj_set_style_text_font(ui.map, &lv_font_montserrat_14, 0);
-    lv_obj_align(ui.map, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_t *side = fo::box(top);
+    lv_obj_set_flex_grow(side, 1);
+    lv_obj_set_height(side, 150);
+    lv_obj_set_flex_flow(side, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(side, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(side, 10, 0);
 
-    ui.boost_bar = lv_bar_create(boost_tile);
-    lv_obj_set_size(ui.boost_bar, lv_pct(100), 14);
-    lv_obj_align(ui.boost_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_bar_set_range(ui.boost_bar, 0, BOOST_BAR_MAX);
+    fo::label(side, &fo_vt323_24, fo::PHOSPHOR_DIM, "TORQUE CONVERTER");
+    ui.lockup_box = fo::box(side);
+    lv_obj_set_size(ui.lockup_box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(ui.lockup_box, fo::hex(fo::PHOSPHOR), 0);
+    lv_obj_set_style_border_color(ui.lockup_box, fo::hex(fo::PHOSPHOR), 0);
+    lv_obj_set_style_border_width(ui.lockup_box, 2, 0);
+    lv_obj_set_style_pad_hor(ui.lockup_box, 10, 0);
+    ui.lockup = fo::label(ui.lockup_box, &fo_vt323_40, fo::PHOSPHOR, "--");
+    ui.map = fo::label(side, &fo_vt323_24, fo::PHOSPHOR_DIM, "MAP -- kPa");
 
-    ui.status = lv_label_create(cont);
-    lv_obj_set_style_text_font(ui.status, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(ui.status, lv_color_black(), 0);
-    lv_obj_set_grid_cell(ui.status, LV_GRID_ALIGN_CENTER, 0, 2, LV_GRID_ALIGN_CENTER, 3, 1);
+    fo::reading_row(parent, ui.atf_pan, "ATF PAN", ATF_SEGS, ROW_W);
+    fo::reading_row(parent, ui.atf_outlet, "ATF OUTLET", ATF_SEGS, ROW_W);
+    fo::reading_row(parent, ui.boost, "BOOST", BOOST_SEGS, ROW_W);
+
+    lv_obj_t *scale = fo::box(parent);
+    lv_obj_set_size(scale, ROW_W, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_top(scale, -8, 0);
+    lv_obj_t *l = fo::label(scale, &fo_vt323_20, fo::PHOSPHOR_DIM, "0");
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
+    l = fo::label(scale, &fo_vt323_20, fo::PHOSPHOR_DIM, "1.0");
+    lv_obj_align(l, LV_ALIGN_CENTER, 0, 0);
+    l = fo::label(scale, &fo_vt323_20, fo::PHOSPHOR_DIM, "2.0 BAR");
+    lv_obj_align(l, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_height(scale, 20);
+
+    // Status line at the bottom, with a blinking cursor
+    lv_obj_t *spacer = fo::box(parent);
+    lv_obj_set_flex_grow(spacer, 1);
+
+    lv_obj_t *status_row = fo::box(parent);
+    lv_obj_set_size(status_row, ROW_W, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(status_row, LV_FLEX_FLOW_ROW);
+    ui.status = fo::label(status_row, &fo_vt323_24, fo::PHOSPHOR, "");
+    ui.cursor = fo::label(status_row, &fo_vt323_24, fo::PHOSPHOR, "_");
 
     clear_values();
-    lv_label_set_text(ui.status, "Waiting for OBD connector");
-    lv_timer_create(obd_stale_timer_cb, 500, nullptr);
+    set_status("> WAITING FOR OBD CONNECTOR");
+    lv_timer_create(obd_timer_cb, 500, nullptr);
 }
 
 void obd_ui_update(const ObdPacket &p)
@@ -165,51 +185,43 @@ void obd_ui_update(const ObdPacket &p)
 
     switch (p.status) {
     case OBD_STATUS_NO_DONGLE:
-        lv_label_set_text(ui.status, "Connector is searching for the OBD dongle");
+        set_status("> SEARCHING FOR OBD DONGLE");
         break;
     case OBD_STATUS_NO_ECU:
-        lv_label_set_text(ui.status, "Dongle connected, vehicle not answering (ignition off?)");
+        set_status("> NO ECU ANSWER (IGNITION OFF?)");
         break;
     default:
-        lv_label_set_text(ui.status, "");
+        set_status("> ECU LINK OK");
         break;
     }
 
     char buf[24];
 
-    // Raw gear code from 21DA, not yet verified against the VDJ200 gearbox
     if (p.gear == OBD_NO_VALUE) {
-        set_value(ui.gear, "--", COLOR_NONE);
+        lv_label_set_text(ui.gear, "-");
     } else {
         snprintf(buf, sizeof(buf), "%d", p.gear);
-        set_value(ui.gear, buf, COLOR_VALUE);
+        lv_label_set_text(ui.gear, buf);
     }
 
-    if (p.lockup == OBD_NO_VALUE) {
-        set_value(ui.lockup, "--", COLOR_NONE);
-    } else if (p.lockup) {
-        set_value(ui.lockup, "LOCKED", COLOR_OK);
-    } else {
-        set_value(ui.lockup, "OPEN", COLOR_VALUE);
-    }
-
+    set_lockup(p.lockup);
     set_temperature(ui.atf_pan, p.atf_pan);
     set_temperature(ui.atf_outlet, p.atf_outlet);
 
     if (p.boost == OBD_NO_VALUE) {
-        set_value(ui.boost, "-- bar", COLOR_NONE);
-        lv_bar_set_value(ui.boost_bar, 0, LV_ANIM_OFF);
+        fo::reading_row_set(ui.boost, "--", false, false);
+        fo::seg_bar_set(ui.boost.bar, 0, fo::PHOSPHOR);
     } else {
-        snprintf(buf, sizeof(buf), "%.2f bar", p.boost / 100.0f);
-        set_value(ui.boost, buf, COLOR_VALUE);
+        snprintf(buf, sizeof(buf), "%.2f BAR", p.boost / 100.0f);
+        fo::reading_row_set(ui.boost, buf, false, false);
         int v = p.boost < 0 ? 0 : p.boost > BOOST_BAR_MAX ? BOOST_BAR_MAX : p.boost;
-        lv_bar_set_value(ui.boost_bar, v, LV_ANIM_OFF);
+        fo::seg_bar_set(ui.boost.bar, (v * BOOST_SEGS + BOOST_BAR_MAX / 2) / BOOST_BAR_MAX, fo::PHOSPHOR);
     }
 
     if (p.map_kpa == OBD_NO_VALUE) {
-        set_value(ui.map, "MAP -- kPa", COLOR_CAPTION);
+        lv_label_set_text(ui.map, "MAP -- kPa");
     } else {
         snprintf(buf, sizeof(buf), "MAP %d kPa", p.map_kpa);
-        set_value(ui.map, buf, COLOR_CAPTION);
+        lv_label_set_text(ui.map, buf);
     }
 }

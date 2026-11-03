@@ -1,25 +1,35 @@
 #include "link_indicator.hpp"
+#include "fo_theme.hpp"
 #include <Arduino.h>
 
 static const uint32_t FLASH_MS = 300;
-static const lv_coord_t DOT_SIZE = 14;
+static const lv_coord_t LAMP_SIZE = 14;
 
-static const lv_color_t COLOR_NEVER = lv_color_make(110, 110, 110);
-static const lv_color_t COLOR_OK    = lv_color_make(0, 140, 40);
-static const lv_color_t COLOR_FLASH = lv_color_make(80, 255, 120);
-static const lv_color_t COLOR_LOST  = lv_color_make(220, 40, 40);
+enum LampState : uint8_t { LAMP_NEVER, LAMP_OK, LAMP_FLASH, LAMP_LOST, LAMP_UNSET };
 
 struct LinkIndicator {
-    lv_obj_t *dot;
-    lv_obj_t *label;
+    lv_obj_t *lamp;
     const volatile uint32_t *last_seen_ms;
     uint32_t timeout_ms;
+    LampState state;
 };
 
-static void set_color(LinkIndicator *li, lv_color_t color)
+// Indicator lamp: unlit, green, bright green flash, red
+static void set_state(LinkIndicator *li, LampState state)
 {
-    lv_obj_set_style_bg_color(li->dot, color, 0);
-    lv_obj_set_style_text_color(li->label, color, 0);
+    if (li->state == state) return;   // restyling redraws the lamp, so only on change
+    li->state = state;
+
+    uint32_t color, glow;
+    switch (state) {
+    case LAMP_OK:    color = 0x3fd02a; glow = 0x5cff3a; break;
+    case LAMP_FLASH: color = 0xc8ff9a; glow = 0x9cff7a; break;
+    case LAMP_LOST:  color = 0xe0301e; glow = 0xff4a2a; break;
+    default:         color = 0x4a3b2c; glow = 0;        break;
+    }
+    lv_obj_set_style_bg_color(li->lamp, fo::hex(color), 0);
+    lv_obj_set_style_shadow_color(li->lamp, fo::hex(glow), 0);
+    lv_obj_set_style_shadow_width(li->lamp, glow ? 10 : 0, 0);
 }
 
 static void link_indicator_timer_cb(lv_timer_t *t)
@@ -29,13 +39,13 @@ static void link_indicator_timer_cb(lv_timer_t *t)
     uint32_t now = millis();
 
     if (seen == 0) {
-        set_color(li, COLOR_NEVER);
+        set_state(li, LAMP_NEVER);
     } else if (now - seen > li->timeout_ms) {
-        set_color(li, COLOR_LOST);
+        set_state(li, LAMP_LOST);
     } else if (now - seen < FLASH_MS) {
-        set_color(li, COLOR_FLASH);
+        set_state(li, LAMP_FLASH);
     } else {
-        set_color(li, COLOR_OK);
+        set_state(li, LAMP_OK);
     }
 }
 
@@ -45,26 +55,25 @@ lv_obj_t *create_link_indicator(lv_obj_t *parent, const char *name,
     LinkIndicator *li = new LinkIndicator{};
     li->last_seen_ms = last_seen_ms;
     li->timeout_ms = timeout_ms;
+    li->state = LAMP_UNSET;
 
-    lv_obj_t *cont = lv_obj_create(parent);
-    lv_obj_remove_style_all(cont);
+    lv_obj_t *cont = fo::box(parent);
     lv_obj_set_size(cont, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_clear_flag(cont, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(cont, 6, 0);
 
-    li->dot = lv_obj_create(cont);
-    lv_obj_remove_style_all(li->dot);
-    lv_obj_set_size(li->dot, DOT_SIZE, DOT_SIZE);
-    lv_obj_set_style_radius(li->dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_opa(li->dot, LV_OPA_COVER, 0);
+    li->lamp = fo::box(cont);
+    lv_obj_set_size(li->lamp, LAMP_SIZE, LAMP_SIZE);
+    lv_obj_set_style_radius(li->lamp, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(li->lamp, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(li->lamp, fo::hex(0x1a130c), 0);
+    lv_obj_set_style_border_width(li->lamp, 2, 0);
+    lv_obj_set_style_shadow_spread(li->lamp, 1, 0);
 
-    li->label = lv_label_create(cont);
-    lv_obj_set_style_text_font(li->label, &lv_font_montserrat_14, 0);
-    lv_label_set_text(li->label, name);
+    fo::label(cont, &fo_stencil_14, fo::ENGRAVED, name);
 
-    set_color(li, COLOR_NEVER);
+    set_state(li, LAMP_NEVER);
     lv_timer_create(link_indicator_timer_cb, 50, li);
     return cont;
 }

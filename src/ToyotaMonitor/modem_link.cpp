@@ -8,14 +8,8 @@ static constexpr size_t RX_BUFFER = 4096;
 
 HardwareSerial Link(1);
 
-enum class State : uint8_t { Sync1, Sync2, Kind, Len1, Len2, Payload, Crc1, Crc2 };
-
-static State state = State::Sync1;
-static uint8_t kind = 0;
-static uint16_t len = 0;
-static uint16_t pos = 0;
-static uint16_t rxCrc = 0;
-static uint8_t payload[Modem::MAX_PAYLOAD];
+static Modem::FrameParser parser;
+static uint8_t txFrame[Modem::MAX_FRAME];
 
 static Stats st = {};
 static bool wasAlive = false;
@@ -38,12 +32,22 @@ bool modemAlive() {
   return st.hasHeartbeat && (millis() - st.lastHeartbeatMs) < Modem::HEARTBEAT_TIMEOUT_MS;
 }
 
+bool send(const uint8_t dstMac[6], const void* data, size_t len) {
+  if (len > Modem::MAX_ESPNOW_DATA) return false;
+  uint8_t payload[sizeof(Modem::EspNowTxHeader) + Modem::MAX_ESPNOW_DATA];
+  memcpy(payload, dstMac, sizeof(Modem::EspNowTxHeader));
+  memcpy(payload + sizeof(Modem::EspNowTxHeader), data, len);
+  size_t n = Modem::buildFrame(txFrame, Modem::KIND_ESPNOW_TX, payload,
+                               (uint16_t)(sizeof(Modem::EspNowTxHeader) + len));
+  return Link.write(txFrame, n) == n;
+}
+
 static void handleHeartbeat() {
-  if (len != sizeof(Modem::Heartbeat)) {
+  if (parser.len != sizeof(Modem::Heartbeat)) {
     st.lengthErrors++;
     return;
   }
-  memcpy(&st.heartbeat, payload, sizeof(st.heartbeat));
+  memcpy(&st.heartbeat, parser.payload, sizeof(st.heartbeat));
   st.lastHeartbeatMs = millis();
   st.hasHeartbeat = true;
 
@@ -56,31 +60,24 @@ static void handleHeartbeat() {
 
 // Returns true if the completed frame produced a Message
 static bool handleFrame(Message& out) {
-  uint8_t hdr[3] = { kind, (uint8_t)(len & 0xFF), (uint8_t)(len >> 8) };
-  uint16_t crc = Modem::crc16(Modem::CRC_INIT, hdr, sizeof(hdr));
-  crc = Modem::crc16(crc, payload, len);
-  if (crc != rxCrc) {
-    st.crcErrors++;
-    return false;
-  }
   st.framesOk++;
 
-  switch (kind) {
+  switch (parser.kind) {
   case Modem::KIND_HEARTBEAT:
     handleHeartbeat();
     return false;
 
   case Modem::KIND_ESPNOW_RX: {
-    if (len < sizeof(Modem::EspNowRxHeader)) {
+    if (parser.len < sizeof(Modem::EspNowRxHeader)) {
       st.lengthErrors++;
       return false;
     }
     Modem::EspNowRxHeader h;
-    memcpy(&h, payload, sizeof(h));
+    memcpy(&h, parser.payload, sizeof(h));
     memcpy(out.srcMac, h.srcMac, sizeof(out.srcMac));
     out.rssi = h.rssi;
-    out.len = len - sizeof(h);
-    memcpy(out.data, payload + sizeof(h), out.len);
+    out.len = parser.len - sizeof(h);
+    memcpy(out.data, parser.payload + sizeof(h), out.len);
     return true;
   }
 
@@ -115,54 +112,18 @@ bool poll(Message& out) {
   }
 
   while (Link.available()) {
-    uint8_t b = (uint8_t)Link.read();
     st.bytesReceived++;
-
-    switch (state) {
-    case State::Sync1:
-      if (b == Modem::SYNC1) state = State::Sync2;
-      break;
-
-    case State::Sync2:
-      if (b == Modem::SYNC2) state = State::Kind;
-      else if (b != Modem::SYNC1) state = State::Sync1;
-      break;
-
-    case State::Kind:
-      kind = b;
-      state = State::Len1;
-      break;
-
-    case State::Len1:
-      len = b;
-      state = State::Len2;
-      break;
-
-    case State::Len2:
-      len |= (uint16_t)b << 8;
-      if (len > Modem::MAX_PAYLOAD) {
-        st.lengthErrors++;
-        state = State::Sync1;
-      } else {
-        pos = 0;
-        state = (len == 0) ? State::Crc1 : State::Payload;
-      }
-      break;
-
-    case State::Payload:
-      payload[pos++] = b;
-      if (pos == len) state = State::Crc1;
-      break;
-
-    case State::Crc1:
-      rxCrc = b;
-      state = State::Crc2;
-      break;
-
-    case State::Crc2:
-      rxCrc |= (uint16_t)b << 8;
-      state = State::Sync1;
+    switch (parser.feed((uint8_t)Link.read())) {
+    case Modem::FrameParser::FRAME:
       if (handleFrame(out)) return true;
+      break;
+    case Modem::FrameParser::CRC_ERROR:
+      st.crcErrors++;
+      break;
+    case Modem::FrameParser::LENGTH_ERROR:
+      st.lengthErrors++;
+      break;
+    case Modem::FrameParser::NONE:
       break;
     }
   }
