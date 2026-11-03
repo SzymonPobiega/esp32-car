@@ -35,9 +35,11 @@ flowchart LR
 
 ToyotaMonitor has four tabs (TYRES, GYRO, TRANS, HEAT), a diagnostics page behind the cog, a round-robin button that rotates the tabs every 30 s, and a status bar that is visible on every page. Swiping left or right also changes tab. The screenshots below show made-up readings from the demo mode (`UI_DEMO_PAGE`), except the diagnostics, which were recorded on the bench.
 
-| Diagnostics | Tyres | Gyro | Transmission | Heater |
-| :---: | :---: | :---: | :---: | :---: |
-| <img width="160" alt="Startup diagnostics" src="images/toyota/diagnostics.gif" /> | <img width="160" alt="Tyres tab" src="images/toyota/tyres.png" /> | <img width="160" alt="Gyro tab" src="images/toyota/gyro.png" /> | <img width="160" alt="Transmission tab" src="images/toyota/transmission.png" /> | <img width="160" alt="Heater tab" src="images/toyota/heater.png" /> |
+<img width="240" alt="Startup diagnostics" src="images/toyota/diagnostics.gif" />
+<img width="240" alt="Tyres tab" src="images/toyota/tyres.png" />
+<img width="240" alt="Gyro tab" src="images/toyota/gyro.png" />
+<img width="240" alt="Transmission tab" src="images/toyota/transmission.png" />
+<img width="240" alt="Heater tab" src="images/toyota/heater.png" />
 
 - **Diagnostics.** Shown at startup: checks the modem, each connector, the diesel heater, the OBD dongle and the ECU link, then scans the engine, gearbox and ABS/VSC modules for fault codes. If everything passes, the dashboard moves on to the tabs; otherwise it stays here, and tapping the cog runs the check again. The animation shortens two 30 s timeouts.
 - **Tyres.** Four tyre pressure gauges with temperature, and the seconds since each sensor's last reading.
