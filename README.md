@@ -24,11 +24,11 @@ ESP32 firmware for in-vehicle dashboards in two vehicles: a **Volvo camper** and
 
 Startup diagnostics, then the tyres, gyro, transmission and heater tabs (made-up readings):
 
-<img width="240" alt="Startup diagnostics" src="images/toyota/diagnostics.gif" />
-<img width="240" alt="Tyres tab" src="images/toyota/tyres.png" />
-<img width="240" alt="Gyro tab" src="images/toyota/gyro.png" />
-<img width="240" alt="Transmission tab" src="images/toyota/transmission.png" />
-<img width="240" alt="Heater tab" src="images/toyota/heater.png" />
+<img width="160" alt="Startup diagnostics" src="images/toyota/diagnostics.gif" />
+<img width="160" alt="Tyres tab" src="images/toyota/tyres.png" />
+<img width="160" alt="Gyro tab" src="images/toyota/gyro.png" />
+<img width="160" alt="Transmission tab" src="images/toyota/transmission.png" />
+<img width="160" alt="Heater tab" src="images/toyota/heater.png" />
 
 ## Modules
 
