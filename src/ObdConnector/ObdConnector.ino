@@ -25,6 +25,7 @@
 #include <freertos/stream_buffer.h>
 #include <Preferences.h>
 #include "ContractsInclude.hpp"
+#include "../Shared/Maintenance.hpp"
 
 using namespace Contracts;
 
@@ -208,6 +209,7 @@ static volatile uint32_t releaseUntilMs = 0;   // 0 = not released
 
 // Runs in the Wi-Fi task
 void onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (Maintenance::onEspNow(info, data, len)) return;   // OTA maintenance command
   if (!info || len != sizeof(ObdCommandPacket)) return;
   if (memcmp(info->src_addr, Vehicle::MODEM_MAC, 6) != 0) return;
   ObdCommandPacket cmd;
@@ -242,6 +244,7 @@ bool initEspNow() {
   }
   esp_now_register_send_cb(onEspNowSent);
   esp_now_register_recv_cb(onEspNowRecv);
+  Maintenance::begin("ObdConnector", MAINT_OBD);
 
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, Vehicle::DISPLAY_MAC, 6);
@@ -266,6 +269,7 @@ void sendPacket() {
 
 // Runs in the esp_timer task every second
 static void pingTimerCb(void *) {
+  if (Maintenance::requested) return;   // the loop is waiting for an OTA upload, not hung
   uint32_t now = millis();
   if (now - lastLoopMs > LOOP_HANG_MS) {
     Serial.printf("[%lu] Loop stuck for %lu s, restarting\n", now, (now - lastLoopMs) / 1000);
@@ -891,6 +895,7 @@ void setup() {
 }
 
 void loop() {
+  Maintenance::loop();
   uint32_t now = millis();
   lastLoopMs = now;
 

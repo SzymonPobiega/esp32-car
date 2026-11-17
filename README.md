@@ -123,3 +123,21 @@ cd src
 ```
 
 The script refuses to flash a board with another vehicle's build unless `-Force` is given. It uses the `arduino-cli` and `esptool` that come with Arduino IDE 2 and the esp32 core. Add each new board to `boards.json`; the Volvo entries still need their `fqbn` filled in.
+
+### Over-the-air updates (connectors)
+
+The ESP32 connectors (TPMS, BMS, OBD, gyro, heater) can be updated over Wi-Fi ([`src/Shared/Maintenance.hpp`](src/Shared/Maintenance.hpp)). Until asked, they don't touch Wi-Fi: holding a connector's button (or ALL) at the bottom of the Toyota dashboard's diagnostics page sends it a maintenance command over ESP-NOW. The connector then stops its normal work, joins the maintenance Wi-Fi and waits 10 minutes for an upload; without one, it restarts into normal operation, as it also does after a successful upload.
+
+One-time setup:
+
+1. Copy `src/Shared/Secrets.example.hpp` to `src/Shared/Secrets.hpp` (git-ignored) and fill in a 2.4 GHz network (a phone or laptop hotspot, or home Wi-Fi in range of the car) and an OTA password.
+2. Flash each connector over USB once, so it has the maintenance code and the credentials. A connector built without them ignores the command.
+
+Then, with the laptop on the same network:
+
+```powershell
+./flash.ps1 -Ota -Sketch ObdConnector                              # finds toyota-obdconnector-692d78.local
+./flash.ps1 -Ota -Sketch ObdConnector -HostAddress 192.168.137.42  # if the .local name doesn't resolve
+```
+
+The board is found by its host name, `<vehicle>-<sketch>-<last 3 MAC bytes>.local`, derived from `boards.json`; the connector also prints it at boot and when it joins the network. The upload uses the esp32 core's `espota`, and the board connects back to the laptop, so the first time Windows may ask to allow `espota.exe` through the firewall (on a network marked Public, allow it there). A connector that crashes with the new firmware needs USB again: there is no automatic rollback.

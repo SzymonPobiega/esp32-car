@@ -17,9 +17,13 @@ namespace Vehicle {
   // Single display, so BMS goes straight to the modem (acknowledged, with retries)
   inline constexpr const uint8_t (&BMS_DEST_MAC)[6] = MODEM_MAC;
 
-  // HeaterConnector; the dashboard sends it heater commands through the modem
+  // Connectors the dashboard sends commands to through the modem (heater and phone-release
+  // commands, and the OTA maintenance command for all of them). Same MACs as in boards.json.
   inline constexpr uint8_t HEATER_CONNECTOR_MAC[] = { 0xD4, 0xE9, 0xF4, 0xE6, 0xCC, 0x90 };
   inline constexpr uint8_t OBD_CONNECTOR_MAC[] = { 0xA4, 0xF0, 0x0F, 0x69, 0x2D, 0x78 };
+  inline constexpr uint8_t TPMS_CONNECTOR_MAC[] = { 0x88, 0x57, 0x21, 0xC0, 0x9D, 0x94 };
+  inline constexpr uint8_t BMS_CONNECTOR_MAC[] = { 0xB0, 0xCB, 0xD8, 0x8E, 0x21, 0xB8 };
+  inline constexpr uint8_t GYRO_CONNECTOR_MAC[] = { 0xD4, 0xE9, 0xF4, 0xE6, 0xC4, 0x74 };
 
   // ---- BLE sensors ----
 

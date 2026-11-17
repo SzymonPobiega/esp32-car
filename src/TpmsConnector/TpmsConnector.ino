@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include "ContractsInclude.hpp"
+#include "../Shared/Maintenance.hpp"
 
 NimBLEScan* pBLEScan = nullptr;
 
@@ -122,6 +123,8 @@ void setup() {
 
     // New-style callback signature for your core:
     esp_now_register_send_cb(onEspNowSent);
+    esp_now_register_recv_cb(Maintenance::onEspNowRecv);   // OTA maintenance command from the dashboard
+    Maintenance::begin("TpmsConnector", MAINT_TPMS);
 
     // Add peer (your ESP32-S3)
     esp_now_peer_info_t peerInfo = {};
@@ -147,6 +150,7 @@ void setup() {
 }
 
 void loop() {
+  Maintenance::loop();
     static uint32_t lastScanStart = 0;
     uint32_t now = millis();
 

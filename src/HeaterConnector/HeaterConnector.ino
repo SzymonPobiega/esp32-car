@@ -24,6 +24,7 @@
 #include <esp_mac.h>
 #include <Preferences.h>
 #include "ContractsInclude.hpp"
+#include "../Shared/Maintenance.hpp"
 #include "ds1302.hpp"
 
 using namespace Contracts;
@@ -75,6 +76,7 @@ static Preferences prefs;
 // ---------- ESP-NOW ----------
 // Runs in the Wi-Fi task: only commands from the modem are queued for loop()
 void onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (Maintenance::onEspNow(info, data, len)) return;   // OTA maintenance command
   if (!info || len != sizeof(HeaterCommandPacket)) return;
   if (memcmp(info->src_addr, Vehicle::MODEM_MAC, 6) != 0) return;
   HeaterCommandPacket cmd;
@@ -106,6 +108,7 @@ bool initEspNow() {
     return false;
   }
   esp_now_register_recv_cb(onEspNowRecv);
+  Maintenance::begin("HeaterConnector", MAINT_HEATER);
   return true;
 }
 
@@ -495,6 +498,7 @@ void setup() {
 }
 
 void loop() {
+  Maintenance::loop();
   handleCommands();
   pollSerial();
   blinkIdentify();

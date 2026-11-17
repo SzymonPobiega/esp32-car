@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include "ContractsInclude.hpp"
+#include "../Shared/Maintenance.hpp"
 
 using namespace Contracts;
 
@@ -61,6 +62,8 @@ void setup() {
 
     // New-style callback signature for your core:
     esp_now_register_send_cb(onEspNowSent);
+    esp_now_register_recv_cb(Maintenance::onEspNowRecv);   // OTA maintenance command from the dashboard
+    Maintenance::begin("GyroConnector", MAINT_GYRO);
 
     // Add peer (your ESP32-S3)
     esp_now_peer_info_t peerInfo = {};
@@ -269,6 +272,7 @@ static bool connectWT901() {
 
 
 void loop() {
+  Maintenance::loop();
   // No gyro installed in this vehicle yet
   if (Vehicle::GYRO_BLE_MAC[0] == '\0') {
     static bool reported = false;

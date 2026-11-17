@@ -14,6 +14,16 @@ Flashes a board that is not in boards.json yet.
 .EXAMPLE
 ./flash.ps1 -Sketch TpmsConnector -Vehicle Toyota -BuildOnly
 Only builds, no board needed.
+
+.EXAMPLE
+./flash.ps1 -Ota -Sketch ObdConnector
+Over the air: the connector must be in update mode (hold OBD on the dashboard's diagnostics
+page) and the laptop on the maintenance Wi-Fi from Shared/Secrets.hpp. The board is found by
+its host name, <vehicle>-<sketch>-<last 3 MAC bytes>.local, derived from boards.json.
+
+.EXAMPLE
+./flash.ps1 -Ota -Sketch HeaterConnector -HostAddress 192.168.137.42
+Over the air to an IP address, when the .local name doesn't resolve.
 #>
 param(
     [string]$Port,
@@ -22,7 +32,11 @@ param(
     [string]$Fqbn,
     [switch]$BuildOnly,
     # Allow flashing a board with a vehicle other than the one boards.json assigns to it
-    [switch]$Force
+    [switch]$Force,
+    # Upload over Wi-Fi to a connector in maintenance mode instead of over USB
+    [switch]$Ota,
+    # With -Ota: the board's IP address, instead of resolving its .local name
+    [string]$HostAddress
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,6 +67,20 @@ if ($Port) {
     } else {
         Write-Host "Board $mac is not in boards.json"
     }
+}
+
+# ---- OTA: the board is the one in boards.json running this sketch for this vehicle ----
+if ($Ota) {
+    if ($Port) { throw '-Ota and -Port exclude each other' }
+    if (-not $Sketch) { throw '-Ota needs -Sketch' }
+    $found = @($boards.GetEnumerator() | Where-Object {
+        $_.Value.sketch -eq $Sketch -and (-not $Vehicle -or $_.Value.vehicle -eq $Vehicle)
+    })
+    if ($found.Count -eq 0) { throw "No board in boards.json runs $Sketch$(if ($Vehicle) { " for the $Vehicle" })" }
+    if ($found.Count -gt 1) { throw "Several boards run ${Sketch}: pass -Vehicle" }
+    $mac = $found[0].Key
+    $board = $found[0].Value
+    Write-Host "Board ${mac}: $($board.name) (over the air)"
 }
 
 # ---- Resolve sketch, vehicle and board settings ----
@@ -90,7 +118,40 @@ Write-Host "Building $Sketch for the $Vehicle ($Fqbn)"
 if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
 
 if ($BuildOnly) { return }
-if (-not $Port) { throw '-Port is required to flash (or pass -BuildOnly)' }
+
+# ---- Flash over the air ----
+if ($Ota) {
+    $secrets = Join-Path $root 'Shared\Secrets.hpp'
+    if (-not (Test-Path $secrets)) { throw 'Shared/Secrets.hpp not found (copy Secrets.example.hpp and fill it in)' }
+    $password = [regex]::Match((Get-Content $secrets -Raw), 'OTA_PASSWORD\s*=\s*"([^"]*)"').Groups[1].Value
+    if (-not $password) { throw 'OTA_PASSWORD is empty in Shared/Secrets.hpp' }
+
+    $espota = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Arduino15\packages\esp32\hardware\esp32') -Filter espota.exe -Recurse |
+        Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+    if (-not $espota) { throw 'espota.exe not found (install the esp32 core in Arduino IDE)' }
+
+    $target = $HostAddress
+    if (-not $target) {
+        $hostName = "$Vehicle-$Sketch-$($mac.Replace(':', '').Substring(6))".ToLower() + '.local'
+        Write-Host "Looking up $hostName"
+        try {
+            $target = ([System.Net.Dns]::GetHostAddresses($hostName) |
+                Where-Object AddressFamily -eq 'InterNetwork' | Select-Object -First 1).IPAddressToString
+        } catch { }
+        if (-not $target) {
+            throw "$hostName not found. Is the connector in update mode and the laptop on the maintenance Wi-Fi? (or pass -HostAddress)"
+        }
+    }
+
+    $bin = Join-Path $buildPath "$Sketch.ino.bin"
+    Write-Host "Flashing $Sketch to $target over the air"
+    & $espota -i $target -p 3232 -a $password -f $bin -r
+    if ($LASTEXITCODE -ne 0) { throw 'OTA upload failed (the first time, allow espota through the Windows firewall: the board connects back to the laptop)' }
+    Write-Host 'Done; the connector restarts into normal operation'
+    return
+}
+
+if (-not $Port) { throw '-Port is required to flash (or pass -BuildOnly or -Ota)' }
 
 # ---- Flash ----
 Write-Host "Flashing $Sketch to $Port"

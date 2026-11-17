@@ -25,6 +25,7 @@ namespace Contracts {
   static constexpr int16_t TYPE_HEATER = 0x0D;
   static constexpr int16_t TYPE_HEATER_COMMAND = 0x0E;
   static constexpr int16_t TYPE_OBD_COMMAND = 0x0F;
+  static constexpr int16_t TYPE_MAINTENANCE_COMMAND = 0x10;
   static constexpr int16_t TYPE_SHELLY_BRIDGE_KEEPALIVE = 0x41;
 
   // Node addresses and other per-vehicle values live in Shared/Vehicle.hpp
@@ -242,6 +243,20 @@ namespace Contracts {
     int16_t arg;
   };
 
+  // Dashboard -> connectors (through the modem): enter maintenance mode, i.e. join the
+  // maintenance Wi-Fi and wait for an OTA upload (Shared/Maintenance.hpp). Fire and forget.
+  static constexpr int16_t MAINT_CMD_ENTER = 1;
+  static constexpr int16_t MAINT_TPMS = 0x01;     // targets bits
+  static constexpr int16_t MAINT_BMS = 0x02;
+  static constexpr int16_t MAINT_OBD = 0x04;
+  static constexpr int16_t MAINT_GYRO = 0x08;
+  static constexpr int16_t MAINT_HEATER = 0x10;
+  struct PACKED MaintenanceCommandPacket {
+    int16_t type;
+    int16_t targets;   // MAINT_* bits; a connector acts when its own bit is set
+    int16_t command;   // MAINT_CMD_*
+  };
+
   // Dashboard -> heater connector (through the modem). The connector echoes seq in
   // HeaterPacket.ack_seq and runs a repeated seq only once, so a lost ack can be resent
   // (seq 0 is never acknowledged: HEATER_CMD_RELEASE only).
@@ -257,6 +272,7 @@ namespace Contracts {
   static_assert(sizeof(HeaterCommandPacket) == 8, "HeaterCommandPacket must be 8 bytes");
   static_assert(sizeof(ObdPacket) == 22, "ObdPacket must be 22 bytes");
   static_assert(sizeof(ObdCommandPacket) == 6, "ObdCommandPacket must be 6 bytes");
+  static_assert(sizeof(MaintenanceCommandPacket) == 6, "MaintenanceCommandPacket must be 6 bytes");
   static_assert(sizeof(DtcPacket) == 42, "DtcPacket must be 42 bytes");
   static_assert(sizeof(GyroHeightPacket) == 4, "GyroHeightPacket must be 4 bytes");
   static_assert(sizeof(TpmsPacket) == 16, "TpmsPacket must be 16 bytes");

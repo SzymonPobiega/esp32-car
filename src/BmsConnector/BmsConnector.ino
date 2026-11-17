@@ -11,6 +11,7 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include "ContractsInclude.hpp"
+#include "../Shared/Maintenance.hpp"
 
 using namespace Contracts;
 
@@ -101,6 +102,8 @@ void setup() {
       ESP.restart();
   }
   esp_now_register_send_cb(onEspNowSent);
+  esp_now_register_recv_cb(Maintenance::onEspNowRecv);   // OTA maintenance command from the dashboard
+  Maintenance::begin("BmsConnector", MAINT_BMS);
 
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, Vehicle::BMS_DEST_MAC, 6);
@@ -208,6 +211,7 @@ static void sendLatest(uint32_t now) {
 }
 
 void loop() {
+  Maintenance::loop();
   uint32_t now = millis();
 
   static uint32_t lastPoll = 0;

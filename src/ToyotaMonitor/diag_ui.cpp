@@ -408,17 +408,85 @@ static void diag_timer_cb(lv_timer_t *)
     }
 }
 
+// ---- OTA update mode buttons ----
+// Holding a button sends a MaintenanceCommandPacket: the connector(s) stop their normal work,
+// join the maintenance Wi-Fi and wait 10 minutes for flash.ps1 -Ota (Shared/Maintenance.hpp).
+// A short tap only explains; holding avoids taking a connector offline by accident.
+
+struct OtaTarget { const char *label; int16_t bits; };
+static const OtaTarget kOtaTargets[] = {
+    { "TPMS", MAINT_TPMS }, { "BMS", MAINT_BMS }, { "OBD", MAINT_OBD },
+    { "GYRO", MAINT_GYRO }, { "HEAT", MAINT_HEATER },
+    { "ALL", MAINT_TPMS | MAINT_BMS | MAINT_OBD | MAINT_GYRO | MAINT_HEATER },
+};
+static const lv_coord_t OTA_BTN_H = 40;
+static const lv_coord_t OTA_GAP = 6;
+
+static void send_maintenance(int16_t bits)
+{
+    struct Dest { int16_t bit; const uint8_t *mac; };
+    static const Dest kDests[] = {
+        { MAINT_TPMS, Vehicle::TPMS_CONNECTOR_MAC }, { MAINT_BMS, Vehicle::BMS_CONNECTOR_MAC },
+        { MAINT_OBD, Vehicle::OBD_CONNECTOR_MAC }, { MAINT_GYRO, Vehicle::GYRO_CONNECTOR_MAC },
+        { MAINT_HEATER, Vehicle::HEATER_CONNECTOR_MAC },
+    };
+    MaintenanceCommandPacket p = { TYPE_MAINTENANCE_COMMAND, bits, MAINT_CMD_ENTER };
+    for (const Dest &d : kDests) {
+        if (!(bits & d.bit)) continue;
+        // Fire and forget, so twice; a connector already in update mode ignores the second
+        modem::send(d.mac, &p, sizeof(p));
+        modem::send(d.mac, &p, sizeof(p));
+    }
+}
+
+static void ota_cb(lv_event_t *e)
+{
+    const OtaTarget *t = (const OtaTarget *)lv_event_get_user_data(e);
+    diag_stop();
+    char buf[64];
+    if (lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED) {
+        snprintf(buf, sizeof(buf), "> HOLD %s TO START OTA UPDATE MODE", t->label);
+        add_line(buf, fo::PHOSPHOR_DIM);
+        return;
+    }
+    send_maintenance(t->bits);
+    snprintf(buf, sizeof(buf), "> OTA UPDATE MODE: %s, 10 MIN", t->label);
+    add_line(buf, fo::PHOSPHOR);
+    add_line("  CONNECTOR(S) OFFLINE UNTIL UPDATED", fo::PHOSPHOR_DIM);
+    Serial.printf("OTA update mode sent to %s (targets 0x%02X)\n", t->label, t->bits);
+}
+
+static void create_ota_row(lv_obj_t *page)
+{
+    lv_obj_t *row = fo::box(page);
+    lv_obj_set_size(row, lv_pct(100), OTA_BTN_H);
+    lv_obj_align(row, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    const int n = sizeof(kOtaTargets) / sizeof(kOtaTargets[0]);
+    lv_coord_t w = (lv_obj_get_content_width(page) - (n - 1) * OTA_GAP) / n;
+    if (w < 40) w = 70;   // layout not ready yet
+    for (int i = 0; i < n; i++) {
+        lv_obj_t *b = fo::crt_button(row, kOtaTargets[i].label, w, OTA_BTN_H, &fo_vt323_24);
+        lv_obj_add_event_cb(b, ota_cb, LV_EVENT_SHORT_CLICKED, (void *)&kOtaTargets[i]);
+        lv_obj_add_event_cb(b, ota_cb, LV_EVENT_LONG_PRESSED, (void *)&kOtaTargets[i]);
+    }
+}
+
 void create_diag_page(lv_obj_t *page, const volatile uint32_t *gyro_last_update)
 {
     gyro_last = gyro_last_update;
     line_chars = ROW_W / lv_font_get_glyph_width(&fo_vt323_24, '.', 0);
     lv_obj_update_layout(page);
-    max_lines = lv_obj_get_content_height(page) / lv_font_get_line_height(&fo_vt323_24);
-    if (max_lines < 10) max_lines = 22;
+    lv_coord_t log_h = lv_obj_get_content_height(page) - OTA_BTN_H - OTA_GAP;
+    max_lines = log_h / lv_font_get_line_height(&fo_vt323_24);
+    if (max_lines < 10) max_lines = 20;
 
     log_box = fo::box(page);
-    lv_obj_set_size(log_box, lv_pct(100), lv_pct(100));
+    lv_obj_set_size(log_box, lv_pct(100), log_h > 0 ? log_h : lv_pct(85));
     lv_obj_set_flex_flow(log_box, LV_FLEX_FLOW_COLUMN);
+    create_ota_row(page);
 
     timer = lv_timer_create(diag_timer_cb, TICK_MS, nullptr);
 }
