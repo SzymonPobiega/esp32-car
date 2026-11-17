@@ -144,13 +144,13 @@ static void ui_demo_timer_cb(lv_timer_t *t)
   gyro_last_update = millis();
   attitude_update(4.0f, -2.0f);
 
-  Contracts::ObdPacket o = { Contracts::TYPE_OBD, Contracts::OBD_STATUS_OK, 4, 1, 92, 108, 186, 100, 85 };
+  Contracts::ObdPacket o = { Contracts::TYPE_OBD, Contracts::OBD_STATUS_OK, 4, 1, 92, 108, 186, 100, 85, 88, 1380 };
   obd_ui_update(o);
 
 
   Contracts::HeaterPacket h = { Contracts::TYPE_HEATER, Contracts::HEATER_LINK_OK, Contracts::HEATER_STATE_RUNNING,
                                 Contracts::HEATER_MODE_LEVEL, 2, 120, 1280, 140, 0, 0, 7 * 60, 1,
-                                Contracts::HEATER_CLOCK_NONE };
+                                Contracts::HEATER_CLOCK_OK, 6 * 60 + 42, Contracts::HEATER_RUN_IDLE };
   heater_ui_update(h);
 
   Contracts::BmsPacket b = { Contracts::TYPE_BMS, 1330, 1200, 87, 19000, 180 };

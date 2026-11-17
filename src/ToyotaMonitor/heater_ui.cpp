@@ -14,9 +14,9 @@ static const uint32_t HEATER_STALE_MS = 15000;
 // Case temperature bar: 20 segments of 10 °C
 static const int CASE_BAR_STEP = 10;
 static const int CASE_SEGS = 20;
-// Cabin temperature bar: 20 segments of 2 °C from -10 °C
-static const int CABIN_BAR_MIN = -10;
-static const int CABIN_BAR_STEP = 2;
+// Cabin temperature bar: 20 segments of 3 °C, -20 to +40 °C
+static const int CABIN_BAR_MIN = -20;
+static const int CABIN_BAR_STEP = 3;
 static const int CABIN_SEGS = 20;
 
 // Commands: resent until the connector echoes the seq (it runs each seq once)
@@ -27,11 +27,10 @@ static const uint32_t HOLD_MS = 1000;         // start / stop need a long press
 static const uint32_t PENDING_SHOW_MS = 6000; // a changed run time shows until echoed, or this long
 
 static const int RUN_STEP_MIN = 15;
-static const int RUN_LENGTH_MIN = 30;
 
 static const lv_coord_t ROW_W = fo::CRT_W - 16 - 2 * 14;   // page width minus padding
 static const lv_coord_t SETTING_BOX = 120;
-static const lv_coord_t GAP = 6;
+static const lv_coord_t GAP = 4;
 
 // Start-up and shutdown phases, highlighted in the strip under the state
 enum Phase { PHASE_NONE = -1, PHASE_IGNITE, PHASE_WARM_UP, PHASE_RUN, PHASE_COOL, PHASE_COUNT };
@@ -94,6 +93,7 @@ struct HeaterUI {
     lv_obj_t *later;
     lv_obj_t *arm;
     lv_obj_t *run_status;
+    lv_obj_t *phone;        // switch: keeps the connector off the heater
     lv_obj_t *status;
     lv_obj_t *cursor;
 };
@@ -217,6 +217,41 @@ static void resend_timer()
     feedback(modem::modemAlive() ? "> NO REPLY FROM HEATER CONNECTOR" : "> ESP-NOW MODEM NOT RUNNING");
 }
 
+// ---- Phone switch: while on, the connector is told every HEATER_RELEASE_REFRESH_MS to stay
+// off the heater, so the phone app can connect. When the switch goes off, or the dashboard loses
+// power, the repeats stop and the connector takes the heater back within HEATER_RELEASE_MS. ----
+
+static bool phone_on = false;
+static uint32_t release_sent_ms = 0;
+
+static void send_release(int16_t arg)
+{
+    // seq 0: not acknowledged, so it doesn't disturb a command in flight
+    HeaterCommandPacket p = { TYPE_HEATER_COMMAND, 0, HEATER_CMD_RELEASE, arg };
+    modem::send(Vehicle::HEATER_CONNECTOR_MAC, &p, sizeof(p));
+    release_sent_ms = millis();
+}
+
+static void release_timer()
+{
+    if (phone_on && millis() - release_sent_ms >= HEATER_RELEASE_REFRESH_MS) send_release(1);
+}
+
+static void show_phone()
+{
+    set_checked(ui.phone, phone_on);
+    set_button_text(ui.phone, phone_on ? "HEATER FREED FOR PHONE" : "FREE HEATER FOR PHONE");
+}
+
+static void phone_cb(lv_event_t *e)
+{
+    phone_on = !phone_on;
+    send_release(phone_on ? 1 : 0);   // off: reconnect now rather than after the release runs out
+    show_phone();
+    feedback(phone_on ? "> CONNECTOR LETTING GO OF HEATER" : "> CONNECTOR TAKING HEATER BACK");
+    Serial.printf("Heater phone switch %s\n", phone_on ? "on" : "off");
+}
+
 // ---- Hold to start / stop: a strip fills along the bottom of the button ----
 
 static void fill_width_cb(void *obj, int32_t w)
@@ -291,13 +326,36 @@ static void show_run()
     set_checked(ui.arm, armed);
     set_button_text(ui.arm, armed ? "ARMED" : "ARM");
 
-    if (last.clock != HEATER_CLOCK_OK) {
-        set_text(ui.run_status, armed ? "> ARMED, INACTIVE: NO RTC YET" : "> MORNING RUN INACTIVE: NO RTC");
+    // The connector runs the morning run itself; this only reports it
+    switch (last.run_state) {
+    case HEATER_RUN_STARTING:
+        set_text(ui.run_status, "> MORNING RUN: STARTING HEATER");
+        return;
+    case HEATER_RUN_RUNNING:
+        snprintf(buf, sizeof(buf), "> MORNING RUN: %d MIN FROM IGNITION", HEATER_RUN_LENGTH_MIN);
+        set_text(ui.run_status, buf);
+        return;
+    case HEATER_RUN_STOPPING:
+        set_text(ui.run_status, "> MORNING RUN: STOPPING HEATER");
+        return;
+    case HEATER_RUN_SKIPPED_LOW_BATTERY:
+        set_text(ui.run_status, "> LAST RUN SKIPPED: BATTERY LOW");
+        return;
+    case HEATER_RUN_FAILED:
+        set_text(ui.run_status, "> LAST MORNING RUN FAILED");
+        return;
+    }
+
+    if (last.clock == HEATER_CLOCK_NONE) {
+        set_text(ui.run_status, armed ? "> ARMED, INACTIVE: NO RTC" : "> MORNING RUN INACTIVE: NO RTC");
+    } else if (last.clock == HEATER_CLOCK_NOT_SET || last.time < 0) {
+        set_text(ui.run_status, "> HEATER CLOCK NOT SET");
     } else if (armed) {
-        snprintf(buf, sizeof(buf), "> RUNS %d MIN FROM %02d:%02d", RUN_LENGTH_MIN, at / 60, at % 60);
+        snprintf(buf, sizeof(buf), "> CLOCK %02d:%02d, RUNS AT %02d:%02d", last.time / 60, last.time % 60,
+                 at / 60, at % 60);
         set_text(ui.run_status, buf);
     } else {
-        snprintf(buf, sizeof(buf), "> %d MIN MORNING RUN NOT ARMED", RUN_LENGTH_MIN);
+        snprintf(buf, sizeof(buf), "> CLOCK %02d:%02d, RUN NOT ARMED", last.time / 60, last.time % 60);
         set_text(ui.run_status, buf);
     }
 }
@@ -403,6 +461,7 @@ static void heater_timer_cb(lv_timer_t *t)
     if (fault) set_state_box("FAULT", phase);
 
     resend_timer();
+    release_timer();
 
     if (heater_last_update == 0) {
         set_status("> WAITING FOR HEATER CONNECTOR");
@@ -521,6 +580,10 @@ void create_heater_tab(lv_obj_t *parent)
 
     ui.run_status = fo::label(parent, &fo_vt323_24, fo::PHOSPHOR_DIM, "");
 
+    ui.phone = fo::crt_button(parent, "", ROW_W, 36, &fo_vt323_24, false);
+    lv_obj_add_event_cb(ui.phone, phone_cb, LV_EVENT_CLICKED, nullptr);
+    show_phone();
+
     // Status line at the bottom, with a blinking cursor
     lv_obj_t *spacer = fo::box(parent);
     lv_obj_set_flex_grow(spacer, 1);
@@ -548,7 +611,7 @@ void heater_ui_update(const HeaterPacket &p)
     if (p.link != HEATER_LINK_OK) {
         if (!stale) clear_values();
         stale = true;
-        set_status("> SEARCHING FOR HEATER");
+        set_status(p.link == HEATER_LINK_RELEASED ? "> HEATER FREE FOR THE PHONE APP" : "> SEARCHING FOR HEATER");
         show_controls();
         show_run();
         return;

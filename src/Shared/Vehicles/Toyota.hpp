@@ -19,6 +19,7 @@ namespace Vehicle {
 
   // HeaterConnector; the dashboard sends it heater commands through the modem
   inline constexpr uint8_t HEATER_CONNECTOR_MAC[] = { 0xD4, 0xE9, 0xF4, 0xE6, 0xCC, 0x90 };
+  inline constexpr uint8_t OBD_CONNECTOR_MAC[] = { 0xA4, 0xF0, 0x0F, 0x69, 0x2D, 0x78 };
 
   // ---- BLE sensors ----
 

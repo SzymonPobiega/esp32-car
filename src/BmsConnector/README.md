@@ -16,10 +16,10 @@ From the vehicle profile ([Volvo](../Shared/Vehicles/Volvo.hpp), [Toyota](../Sha
 
 ## How it works
 
-1. A non-blocking state machine connects to the BMS as a GATT client: Idle → Discovering → Subscribing → Ready, with a 5 s back-off after a failure. It uses service `FF00`, notify characteristic `FF01` and write characteristic `FF02`.
+1. A non-blocking state machine connects to the BMS as a GATT client: Idle → Connecting → Discovering → Subscribing → Ready. It uses service `FF00`, notify characteristic `FF01` and write characteristic `FF02`. A connection attempt gives up after 12 s; a failure, a disconnect, or 5 s without a valid reply leads to a new attempt after 5 s. Every state change is printed (`BLE Connecting -> Discovering`).
 2. Once Ready, it sends the basic-info command `DD A5 03 00 FF FD 77` every second.
-3. It reassembles the `DD … 77` reply from the notifications and extracts voltage, current, remaining capacity, state of charge and temperature.
-4. Every second it sends the latest `BmsPacket` to `Vehicle::BMS_DEST_MAC` and prints it to the serial log.
+3. It reassembles the `DD <cmd> <status> <len> … <checksum> 77` reply from the notifications, using the length byte and checking the checksum, and extracts voltage, current, remaining capacity, state of charge and temperature.
+4. Every second it sends the latest `BmsPacket` to `Vehicle::BMS_DEST_MAC` and prints it to the serial log, but only while the BMS has answered in the last 5 s. When the BMS is unreachable nothing is sent, so the dashboard dims the values and its BMS light turns red, instead of showing zeros.
 
 ## Output
 
