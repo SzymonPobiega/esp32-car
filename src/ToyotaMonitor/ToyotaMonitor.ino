@@ -37,7 +37,7 @@ static lv_obj_t *tab_lamps[kButtons];   // none for the cog button
 
 static void build_ui();
 static void show_page(int index);
-static void start_diagnostics();
+static void start_diagnostics(bool rotate_on_pass);
 
 // Layout check: uncomment to start on a page (0 TYRES, 1 GYRO, 2 TRANS, 3 HEAT)
 // with made-up readings, refreshed every second
@@ -240,7 +240,7 @@ void setup()
   start_ui_demo(UI_DEMO_PAGE);
 #else
   // Start on the diagnostics page; round-robin starts once everything checks out
-  start_diagnostics();
+  start_diagnostics(true);
 #endif
 }
 
@@ -325,16 +325,18 @@ static void diagnostics_passed()
   show_page(0);
 }
 
-static void start_diagnostics()
+// At boot a pass switches to the rotating tabs; a run from the cog stays on the
+// diagnostics page afterwards (where the OTA buttons are)
+static void start_diagnostics(bool rotate_on_pass)
 {
   set_auto_rotate(false);
   show_page(DIAG_PAGE);
-  diag_start(diagnostics_passed);
+  diag_start(rotate_on_pass ? diagnostics_passed : nullptr);
 }
 
 static void diag_clicked_cb(lv_event_t *e)
 {
-  start_diagnostics();
+  start_diagnostics(false);
 }
 
 // Swiping left / right steps through the rotated tabs (not diagnostics). Like a tab
