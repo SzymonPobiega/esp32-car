@@ -337,6 +337,9 @@ static void finale_tick()
                 pending_result = add_step_line(kFinale[e / 2].name);
                 cursor = pending_result;
             } else {
+                // The label was the blinking cursor; stop blinking it, or it can stay
+                // hidden when the next line takes the cursor
+                cursor = nullptr;
                 lv_obj_clear_flag(pending_result, LV_OBJ_FLAG_HIDDEN);
                 set_result(pending_result, STEP_OK, "ONLINE");
             }
