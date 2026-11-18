@@ -776,13 +776,18 @@ void loop()
   lv_tick_inc(now - last);
   last = now;
 
+  // Render timing for tuning, toggled with T: prints every lv_timer_handler pass over 20 ms
+  static bool report_refresh = false;
+  uint32_t t0 = micros();
   lv_timer_handler();
+  if (report_refresh && micros() - t0 > 20000) Serial.printf("RENDER %u ms\n", (unsigned)((micros() - t0) / 1000));
 
   // 'S' screenshot, '1'..'5' show a page (for screenshots of every page),
-  // 'P' plays the startup announcement (speaker test)
+  // 'P' plays the startup announcement (speaker test), 'T' render timing
   while (Serial.available()) {
     int c = Serial.read();
     if (c == 'S') send_snapshot();
+    else if (c == 'T') report_refresh = !report_refresh;
 #ifdef UI_RECORD
     else if (c == 'R') {
       rec_on = false;
