@@ -6,6 +6,7 @@
 #include <esp_now.h>
 #include "ContractsInclude.hpp"
 #include "../Shared/Maintenance.hpp"
+#include "../Shared/CarHubPeer.hpp"
 
 NimBLEScan* pBLEScan = nullptr;
 
@@ -71,6 +72,7 @@ class MyScanCallbacks : public NimBLEScanCallbacks {
             pendingMessage.sequence++;
 
             esp_err_t res = esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
+            CarHubPeer::send(&pendingMessage, sizeof(pendingMessage));
             Serial.print("  |  ESP-NOW send: ");
             Serial.println(res == ESP_OK ? "OK" : String("ERR ") + res);
 
@@ -136,6 +138,7 @@ void setup() {
         Serial.println("Failed to add ESP-NOW peer!");
         while (true) { delay(1000); }
     }
+    if (!CarHubPeer::add()) Serial.println("Failed to add the CarHub peer");
 
     // --- BLE scanner init (NimBLE) --- //
     NimBLEDevice::init("TPMS-Gateway");
@@ -166,4 +169,5 @@ void loop() {
 
     //PING - send last received measurement (sensorId 0 until the first sensor is received)
     esp_err_t res = esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t*)&pendingMessage, sizeof(pendingMessage));
+    CarHubPeer::send(&pendingMessage, sizeof(pendingMessage));
 }

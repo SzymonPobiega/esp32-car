@@ -30,6 +30,7 @@ flowchart LR
 | [GyroConnector](src/GyroConnector/README.md) | ESP32 | Attitude gateway | BLE GATT to WT901 | ESP-NOW unicast to the modem |
 | [EspNowUartBridge](src/EspNowUartBridge/README.md) | ESP32-C6 (on the P4 board) | ESP-NOW modem | ESP-NOW | UART to the P4 |
 | [ToyotaMonitor](src/ToyotaMonitor/README.md) | ESP32-P4, 480×800 MIPI-DSI | Dashboard | UART from the modem | Display |
+| [CarHub](https://github.com/SzymonPobiega/meshtastic-firmware/blob/carhub/src/modules/CarHub/README.md) | LilyGO T-Beam (ESP32, LoRa 868 MHz), always powered | LoRa gateway: status and heater control from a phone or Home Assistant over Meshtastic | ESP-NOW copies from the connectors; BLE to the BMS, gyro and TPMS while the ignition is off; Meshtastic direct messages | Meshtastic direct messages; ESP-NOW heater commands |
 
 ## Dashboard
 
@@ -48,6 +49,10 @@ ToyotaMonitor has four tabs (TYRES, GYRO, TRANS, HEAT), a diagnostics page behin
 - **Heater.** State, mode, setting, supply voltage, and case and cabin temperatures of the HCalory diesel heater. Hold the power button to start or stop it; level / thermostat mode and `-` / `+` change the setting. When armed, the heater connector runs the morning run on its own, using its DS1302 clock: every day at the set time it starts the heater (unless the heater reports 10 V or less; it reports whole volts) and stops it 30 minutes after ignition. The status line shows the connector's clock and the run's progress. The FREE HEATER FOR PHONE switch makes the connector disconnect from the heater, so the HCalory app can connect: while it is on, the dashboard repeats the request every 15 s, and the connector keeps off the heater for 30 s after each one. Switching it off reconnects at once; if the dashboard loses power instead, the connector reconnects within 30 s.
 - **Status bar.** House battery values (V, A, SOC, °C), greyed out after 10 s without data, and five connector status lights: TPMS, OBD, BMS, GYRO and HEAT. A light is grey before the first packet, green with a flash on each packet, and red when packets stop (15 s for TPMS and OBD, 10 s for BMS and gyro).
 
+## Remote access (CarHub)
+
+The CarHub, an always-powered LilyGO T-Beam running Meshtastic with a custom module, makes the car reachable over LoRa: from a phone through a Meshtastic node such as a RAK WisMesh Tag, and later from Home Assistant through a Meshtastic node at home. Every connector also sends it a copy of its packets. With the ignition off, when the BMS, gyro and TPMS connectors are unpowered, it reads those sensors over BLE itself; it keeps off a sensor whose connector it has heard recently, so the connectors get their sensors back when the ignition comes on. It answers text commands (`status`, `heat on`, `morning 06:30`, ...) sent as Meshtastic direct messages from authorised nodes, and sends alerts (heater started or stopped, low house battery, ignition on or off). The module lives in a Meshtastic fork; see its [README](https://github.com/SzymonPobiega/meshtastic-firmware/blob/carhub/src/modules/CarHub/README.md).
+
 ## Communication links
 
 | Link | Transport | Addressing | Framing | Reliability |
@@ -56,6 +61,8 @@ ToyotaMonitor has four tabs (TYRES, GYRO, TRANS, HEAT), a diagnostics page behin
 | JBD BMS → BmsConnector | BLE GATT notify + write (FF00/FF01/FF02) | `Vehicle::BMS_BLE_MAC` (public) | JBD `DD … 77` frames | State machine, 5 s retry |
 | ELM327 dongle → ObdConnector | BLE GATT serial service (auto-detected) | Name / known ELM service, or `Vehicle::OBD_DONGLE_MAC` | ELM327 text commands, `>` prompt | Rescan on disconnect; value cleared after 3 failed reads |
 | Connectors → modem | ESP-NOW unicast | `Vehicle::DISPLAY_MAC`, `Vehicle::BMS_DEST_MAC` (both the modem) | Packed struct | Radio ACK; pings every 1–5 s |
+| Connectors → CarHub | ESP-NOW unicast, a copy of each packet | `Vehicle::CARHUB_MAC` | Packed struct | None (the CarHub keeps the latest value with its age) |
+| CarHub ↔ phone, Home Assistant | Meshtastic (LoRa 868 MHz) direct messages, PKI-encrypted | Meshtastic node numbers; commands only from admin keys | Text commands and replies | Meshtastic ACK and retries |
 | Modem → ToyotaMonitor | UART, 115200 8N1, C6 GPIO 16 TX → P4 GPIO 32 | Point to point | `AA 55` sync, kind, length, CRC-16 | CRC check; heartbeat every 1 s |
 
 ## Node addresses
@@ -65,6 +72,7 @@ From [`src/Shared/Vehicles/Toyota.hpp`](src/Shared/Vehicles/Toyota.hpp):
 | Constant | MAC | Board |
 | --- | --- | --- |
 | `MODEM_MAC` (= `DISPLAY_MAC`, `BMS_DEST_MAC`) | 9C:13:9E:C3:FF:60 | EspNowUartBridge on the C6 |
+| `CARHUB_MAC` | A4:F0:0F:D8:B4:40 | CarHub (T-Beam) |
 
 | Sensor | Address / IDs |
 | --- | --- |

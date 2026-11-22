@@ -25,6 +25,12 @@ namespace Vehicle {
   inline constexpr uint8_t BMS_CONNECTOR_MAC[] = { 0xB0, 0xCB, 0xD8, 0x8E, 0x21, 0xB8 };
   inline constexpr uint8_t GYRO_CONNECTOR_MAC[] = { 0xD4, 0xE9, 0xF4, 0xE6, 0xC4, 0x74 };
 
+  // CarHub: the always-on LoRa gateway (T-Beam running Meshtastic with the CarHub module,
+  // github.com/SzymonPobiega/meshtastic-firmware). The connectors send it a copy of every packet;
+  // the heater connector also takes commands from it.
+  inline constexpr bool HAS_CARHUB = true;
+  inline constexpr uint8_t CARHUB_MAC[] = { 0xA4, 0xF0, 0x0F, 0xD8, 0xB4, 0x40 };
+
   // ---- BLE sensors ----
 
   inline constexpr const char *BMS_BLE_MAC = "A5:C2:37:2B:DC:A1";

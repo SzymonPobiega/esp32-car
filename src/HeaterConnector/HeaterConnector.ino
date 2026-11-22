@@ -25,6 +25,7 @@
 #include <Preferences.h>
 #include "ContractsInclude.hpp"
 #include "../Shared/Maintenance.hpp"
+#include "../Shared/CarHubPeer.hpp"
 #include "ds1302.hpp"
 
 using namespace Contracts;
@@ -74,11 +75,11 @@ static QueueHandle_t commands = nullptr;   // HeaterCommandPackets from the dash
 static Preferences prefs;
 
 // ---------- ESP-NOW ----------
-// Runs in the Wi-Fi task: only commands from the modem are queued for loop()
+// Runs in the Wi-Fi task: only commands from the modem or the CarHub are queued for loop()
 void onEspNowRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   if (Maintenance::onEspNow(info, data, len)) return;   // OTA maintenance command
   if (!info || len != sizeof(HeaterCommandPacket)) return;
-  if (memcmp(info->src_addr, Vehicle::MODEM_MAC, 6) != 0) return;
+  if (memcmp(info->src_addr, Vehicle::MODEM_MAC, 6) != 0 && !CarHubPeer::isCarHub(info->src_addr)) return;
   HeaterCommandPacket cmd;
   memcpy(&cmd, data, sizeof(cmd));
   if (cmd.type == TYPE_HEATER_COMMAND) xQueueSend(commands, &cmd, 0);
@@ -107,6 +108,7 @@ bool initEspNow() {
     Serial.println("Failed to add ESP-NOW peer!");
     return false;
   }
+  if (!CarHubPeer::add()) Serial.println("Failed to add the CarHub peer");
   esp_now_register_recv_cb(onEspNowRecv);
   Maintenance::begin("HeaterConnector", MAINT_HEATER);
   return true;
@@ -115,6 +117,7 @@ bool initEspNow() {
 void sendPacket() {
   packet.type = TYPE_HEATER;
   esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t *)&packet, sizeof(packet));
+  CarHubPeer::send(&packet, sizeof(packet));
   lastSendMs = millis();
 }
 

@@ -7,6 +7,7 @@
 #include <esp_now.h>
 #include "ContractsInclude.hpp"
 #include "../Shared/Maintenance.hpp"
+#include "../Shared/CarHubPeer.hpp"
 
 using namespace Contracts;
 
@@ -75,6 +76,7 @@ void setup() {
         Serial.println("Failed to add ESP-NOW peer!");
         while (true) { delay(1000); }
     }
+    if (!CarHubPeer::add()) Serial.println("Failed to add the CarHub peer");
 
     NimBLEDevice::init("GYRO-Gateway");
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -163,6 +165,7 @@ static void consumeFrames() {
         pkt.yaw_deg   = (int16_t)(yaw   * 100.0f);
         pkt.height = height;
         esp_now_send(Vehicle::DISPLAY_MAC, (uint8_t*)&pkt, sizeof(pkt));
+        CarHubPeer::send(&pkt, sizeof(pkt));
       }
 
       rxBuf.erase(rxBuf.begin(), rxBuf.begin() + FRAME_LEN);

@@ -6,6 +6,10 @@ namespace Vehicle {
 
   inline constexpr const char *NAME = "Volvo";
 
+  // No CarHub (LoRa gateway) in this vehicle yet
+  inline constexpr bool HAS_CARHUB = false;
+  inline constexpr uint8_t CARHUB_MAC[] = { 0, 0, 0, 0, 0, 0 };
+
   // ---- ESP-NOW nodes (Wi-Fi STA MACs) ----
 
   // VolvoMonitor (5" S3): receives TPMS and gyro

@@ -1,6 +1,18 @@
 {
   "_comment": "Physical boards, keyed by the MAC esptool reports. flash.ps1 uses this to pick the sketch, vehicle and board settings. Entries with an empty sketch or fqbn must be completed before flashing.",
   "boards": {
+    "a4:f0:0f:d8:b4:40": {
+      "name": "Toyota CarHub (T-Beam 868, Meshtastic fork; build with PlatformIO, see the CarHub README)",
+      "vehicle": "Toyota",
+      "sketch": "",
+      "fqbn": ""
+    },
+    "38:3e:51:59:1d:f0": {
+      "name": "Spare ESP32 (CarHub bench rig)",
+      "vehicle": "Toyota",
+      "sketch": "CarHubRig",
+      "fqbn": "esp32:esp32:esp32"
+    },
     "30:ed:a0:e2:35:14": {
       "name": "Toyota dashboard (P4)",
       "vehicle": "Toyota",

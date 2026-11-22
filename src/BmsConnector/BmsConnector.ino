@@ -12,6 +12,7 @@
 #include <esp_now.h>
 #include "ContractsInclude.hpp"
 #include "../Shared/Maintenance.hpp"
+#include "../Shared/CarHubPeer.hpp"
 
 using namespace Contracts;
 
@@ -113,6 +114,7 @@ void setup() {
       Serial.println("Failed to add ESP-NOW peer!");
       ESP.restart();
   }
+  if (!CarHubPeer::add()) Serial.println("Failed to add the CarHub peer");
 
   NimBLEDevice::init("ESP32-BMS");
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -202,6 +204,7 @@ static void sendLatest(uint32_t now) {
   portEXIT_CRITICAL(&dataMux);
 
   esp_now_send(Vehicle::BMS_DEST_MAC, (uint8_t*)&pkt, sizeof(pkt));
+  CarHubPeer::send(&pkt, sizeof(pkt));
   Serial.printf("BMS: V=%ld.%02ldV  I=%ld.%02ldA  SOC=%u%%  Rem=%ld.%02ldAh  T=%ld.%1ldC\n",
                 pkt.volts / 100, abs(pkt.volts % 100),
                 pkt.amps / 100, abs(pkt.amps % 100),
